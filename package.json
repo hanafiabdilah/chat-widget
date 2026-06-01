@@ -1,9 +1,30 @@
 {
-  "name": "@multichat/chat-widget",
+  "name": "@multichat-adslogin/chat-widget",
   "version": "0.1.0",
   "type": "module",
-  "description": "Embeddable React chat widget. Plug into any host app via a single component; supports multiple templates and pluggable adapters (mock, omnichannel).",
-  "license": "UNLICENSED",
+  "description": "Embeddable React chat widget for the Nuvemchat / MultiChat Live Chat API. Single component, drag-and-drop attachments, realtime via Laravel Reverb, dynamic initial chat options.",
+  "keywords": [
+    "chat",
+    "chat-widget",
+    "react",
+    "live-chat",
+    "customer-support",
+    "nuvemchat",
+    "multichat",
+    "reverb",
+    "websocket",
+    "embed"
+  ],
+  "license": "MIT",
+  "author": "MultiChat",
+  "homepage": "https://github.com/hanafiabdilah/chat-widget#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanafiabdilah/chat-widget.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hanafiabdilah/chat-widget/issues"
+  },
   "sideEffects": [
     "**/*.css"
   ],
@@ -19,13 +40,17 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "peerDependencies": {
     "lucide-react": ">=0.300.0",

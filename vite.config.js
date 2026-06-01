@@ -19,7 +19,7 @@ export default defineConfig({
     rollupOptions: {
       external: ['react', 'react-dom', 'react/jsx-runtime', 'lucide-react'],
       output: {
-        // Pin the CSS asset name so host can `import '@multichat/chat-widget/styles.css'`.
+        // Pin the CSS asset name so host can `import '@multichat-adslogin/chat-widget/styles.css'`.
         assetFileNames: (asset) => (asset.name?.endsWith('.css') ? 'chat-widget.css' : asset.name),
       },
     },

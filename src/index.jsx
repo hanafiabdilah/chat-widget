@@ -1,5 +1,5 @@
 // Public entry for the npm package. Re-exports the React surface the
-// host consumes. CSS lives at `@multichat/chat-widget/styles.css` and the
+// host consumes. CSS lives at `@multichat-adslogin/chat-widget/styles.css` and the
 // host imports it once near its bundle entry — keeping CSS imports out of
 // the JS module so SSR/CJS users aren't forced to handle stylesheets.
 import './styles.css';
