@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  FileText, Loader2, MessageCircle, Paperclip, RotateCcw, Send, Upload, X,
+  FileText, Loader2, MessageCircle, Paperclip, RotateCcw, Send, Smile, Upload, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
+import { EmojiPicker } from '../EmojiPicker.jsx';
 
 const formatSize = (bytes) => {
   if (!bytes) return '';
@@ -389,9 +390,27 @@ const Panel = ({ onClose, conversation }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const textInputRef = useRef(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [pending, setPending] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepthRef = useRef(0);
+
+  const insertEmoji = (emoji) => {
+    const el = textInputRef.current;
+    if (!el || typeof el.selectionStart !== 'number') {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd ?? start;
+    setInput((prev) => prev.slice(0, start) + emoji + prev.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      try { el.setSelectionRange(pos, pos); } catch (_e) { /* ignore */ }
+    });
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -534,7 +553,34 @@ const Panel = ({ onClose, conversation }) => {
           {isResolved ? (
             <ResolvedFooter onReset={conversation.reset} />
           ) : (
-          <>
+          <div style={{ position: 'relative' }}>
+            {emojiOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '100%',
+                  left: 8,
+                  right: 8,
+                  marginBottom: 8,
+                  zIndex: 3,
+                }}
+              >
+                <EmojiPicker
+                  onSelect={insertEmoji}
+                  onClose={() => setEmojiOpen(false)}
+                  colors={{
+                    bg: palette.surface,
+                    surfaceAlt: palette.surfaceAlt,
+                    border: palette.border,
+                    borderSubtle: palette.borderSubtle || palette.border,
+                    text: palette.text,
+                    textMuted: palette.textMuted,
+                    accent: palette.accent,
+                    hover: palette.surfaceAlt,
+                  }}
+                />
+              </div>
+            )}
             {pending && <AttachmentPreview pending={pending} onCancel={cancelPending} />}
             <div
               className="px-4 py-3 flex items-end gap-2 flex-shrink-0"
@@ -557,6 +603,7 @@ const Panel = ({ onClose, conversation }) => {
                 style={{ background: palette.surfaceAlt, borderRadius: 999 }}
               >
                 <input
+                  ref={textInputRef}
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -565,6 +612,17 @@ const Panel = ({ onClose, conversation }) => {
                   className="flex-1 bg-transparent outline-none text-sm"
                   style={{ color: palette.text }}
                 />
+                <button
+                  type="button"
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  className="p-0.5 rounded-full transition-colors"
+                  style={{ color: emojiOpen ? palette.accent : palette.textMuted }}
+                  aria-label="Pick emoji"
+                  aria-expanded={emojiOpen}
+                  title="Emoji"
+                >
+                  <Smile size={16} />
+                </button>
               </div>
               <button
                 type="button"
@@ -583,7 +641,7 @@ const Panel = ({ onClose, conversation }) => {
                 <Send size={16} />
               </button>
             </div>
-          </>
+          </div>
           )}
         </>
       ) : (

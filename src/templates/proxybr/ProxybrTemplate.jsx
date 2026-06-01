@@ -4,6 +4,7 @@ import {
   RotateCcw, Send, Smile, Upload, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
+import { EmojiPicker } from '../EmojiPicker.jsx';
 
 // Pretty-prints a file size in KB / MB. Used in attachment chips and the
 // document renderer; rough precision is fine for UI.
@@ -457,6 +458,27 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const textInputRef = useRef(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  // Insert at the caret instead of appending — feels right when the
+  // visitor goes back to add an emoji mid-sentence. Falls back to append
+  // if we can't read the selection range (e.g. ref not yet bound).
+  const insertEmoji = (emoji) => {
+    const el = textInputRef.current;
+    if (!el || typeof el.selectionStart !== 'number') {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd ?? start;
+    setInput((prev) => prev.slice(0, start) + emoji + prev.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      try { el.setSelectionRange(pos, pos); } catch (_e) { /* some inputs reject this */ }
+    });
+  };
 
   // Attachment staging state. Shape:
   //   null  →  nothing pending
@@ -652,7 +674,34 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
           {isResolved ? (
             <ResolvedFooter t={t} onReset={conversation.reset} />
           ) : (
-          <>
+          <div style={{ position: 'relative' }}>
+            {emojiOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '100%',
+                  left: 8,
+                  right: 8,
+                  marginBottom: 8,
+                  zIndex: 3,
+                }}
+              >
+                <EmojiPicker
+                  onSelect={insertEmoji}
+                  onClose={() => setEmojiOpen(false)}
+                  colors={{
+                    bg: t.surface,
+                    surfaceAlt: t.surfaceAlt,
+                    border: t.border,
+                    borderSubtle: t.borderSubtle || t.border,
+                    text: t.text,
+                    textMuted: t.textMuted,
+                    accent: t.accent,
+                    hover: `${t.accent}15`,
+                  }}
+                />
+              </div>
+            )}
             {pending && (
               <AttachmentPreview pending={pending} onCancel={cancelPending} t={t} />
             )}
@@ -677,6 +726,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
                 style={{ background: t.bg, border: `1px solid ${t.border}` }}
               >
                 <input
+                  ref={textInputRef}
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -685,7 +735,15 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
                   className="flex-1 bg-transparent outline-none text-sm"
                   style={{ color: t.text }}
                 />
-                <button type="button" className="p-0.5 rounded transition-colors" style={{ color: t.textMuted }} title="Emoji">
+                <button
+                  type="button"
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  className="p-0.5 rounded transition-colors"
+                  style={{ color: emojiOpen ? t.accent : t.textMuted }}
+                  title="Emoji"
+                  aria-label="Selecionar emoji"
+                  aria-expanded={emojiOpen}
+                >
                   <Smile size={14} />
                 </button>
               </div>
@@ -706,7 +764,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
                 <Send size={15} />
               </button>
             </div>
-          </>
+          </div>
           )}
         </>
       ) : (
