@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Bot, Check, CheckCheck, MessageCircle, Paperclip, Send, Smile, X,
+  Bot, Check, CheckCheck, MessageCircle, Paperclip, RotateCcw, Send, Smile, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
 
@@ -199,6 +199,34 @@ const InitialOptionsRow = ({ options, onSelect, t }) => (
   </div>
 );
 
+// Replaces the input bar when the conversation has been resolved by the
+// agent. Visitor can read the history (the messages list above is still
+// visible) but can't send anything new — the only action is starting a
+// fresh conversation via reset().
+const ResolvedFooter = ({ t, onReset }) => (
+  <div
+    className="flex flex-col items-center gap-2 px-4 py-3 flex-shrink-0"
+    style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
+  >
+    <div className="font-mono text-[10px] uppercase text-center" style={{ color: t.textFaint, letterSpacing: '0.1em' }}>
+      Conversa encerrada pelo atendente
+    </div>
+    <button
+      type="button"
+      onClick={onReset}
+      className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] transition-all"
+      style={{
+        background: t.accent,
+        color: t.accentText,
+        boxShadow: `0 4px 12px ${t.accent}30`,
+      }}
+    >
+      <RotateCcw size={11} />
+      Iniciar nova conversa
+    </button>
+  </div>
+);
+
 // Placeholder shown when the adapter hasn't reported `status: 'ready'` yet
 // (i.e. still loading config / session, or got a 422 invalid app_id from
 // the backend). Intentionally generic — no error text, no retry button —
@@ -277,6 +305,10 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
   // we show a neutral "warming up" placeholder so the embed never looks
   // broken from the visitor's point of view.
   const isReady = conversation.status === 'ready';
+  // When the agent resolves the conversation, history stays readable but
+  // the input is replaced by a "Start new conversation" CTA — visitor
+  // controls when to spin up a fresh session.
+  const isResolved = conversation.conversationStatus === 'resolved';
 
   return (
     <div
@@ -327,12 +359,14 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
               <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} />
             ))}
             {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} t={t} />}
-            {showInitialOptions && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} t={t} />}
+            {showInitialOptions && !isResolved && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} t={t} />}
             {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} t={t} />}
             <div ref={messagesEndRef} />
           </div>
 
-
+          {isResolved ? (
+            <ResolvedFooter t={t} onReset={conversation.reset} />
+          ) : (
           <div
             className="flex items-end gap-2 px-3 py-3 flex-shrink-0"
             style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
@@ -374,6 +408,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
               <Send size={15} />
             </button>
           </div>
+          )}
         </>
       ) : (
         <NotReadyBody t={t} />
@@ -397,12 +432,13 @@ export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation, 
   // (FAB, Panel, MessageBubble, etc.) always receive a complete palette.
   // Hosts that DO pass `theme` keep full control.
   const t = theme || DEFAULT_THEME;
-  // Suppress badge + pulse while the adapter isn't ready — showing "2 unread"
-  // on a not-yet-connected widget would be a lie. Once ready, fall back to
-  // the marketing "attention" pattern (pulse ring + small badge).
+  // Unread badge + pulse ring are driven by real `unreadCount` from API.md
+  // §4.3 (outgoing messages newer than `last_seen_at`). When the panel is
+  // open or the adapter isn't ready, suppress both — opening the panel
+  // triggers POST /seen which resets the count anyway.
   const ready = conversation.status === 'ready';
-  const fabUnread = !ready || isOpen ? 0 : 2;
-  const fabHasNew = ready && !isOpen;
+  const fabUnread = ready && !isOpen ? conversation.unreadCount : 0;
+  const fabHasNew = fabUnread > 0;
   return (
   <>
     <style>{`

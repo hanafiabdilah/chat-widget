@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Send, X } from 'lucide-react';
+import { MessageCircle, RotateCcw, Send, X } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
 
 // Brand-neutral Intercom-style template. Does NOT consume the host's `t`
@@ -183,6 +183,34 @@ const InitialOptionsRow = ({ options, onSelect }) => (
   </div>
 );
 
+// Footer shown in place of the input when the conversation has been
+// resolved by the agent. Visitor can still scroll the history but the
+// only forward action is starting a fresh session.
+const ResolvedFooter = ({ onReset }) => (
+  <div
+    className="flex flex-col items-center gap-2 px-4 py-3 flex-shrink-0"
+    style={{ background: palette.surface, borderTop: `1px solid ${palette.border}` }}
+  >
+    <div className="text-xs text-center" style={{ color: palette.textMuted }}>
+      This conversation has ended
+    </div>
+    <button
+      type="button"
+      onClick={onReset}
+      className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all"
+      style={{
+        background: palette.accent,
+        color: palette.accentText,
+        boxShadow: `0 4px 12px ${palette.accent}40`,
+        fontWeight: 500,
+      }}
+    >
+      <RotateCcw size={12} />
+      Start new conversation
+    </button>
+  </div>
+);
+
 // Placeholder body shown until the adapter reports `status: 'ready'`
 // (covers normal config/session loading AND the 422 invalid-app_id case).
 // Deliberately neutral so a misconfigured embed reads as "still warming
@@ -229,6 +257,7 @@ const Panel = ({ onClose, conversation }) => {
   // (loading, 422 unavailable, transient error) render a neutral
   // "setting up" placeholder so visitors never face a broken-looking chat.
   const isReady = conversation.status === 'ready';
+  const isResolved = conversation.conversationStatus === 'resolved';
 
   return (
     <div
@@ -273,10 +302,14 @@ const Panel = ({ onClose, conversation }) => {
               <MessageBubble key={message.id} msg={message} agent={currentAgent} />
             ))}
             {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} />}
+            {showInitialOptions && !isResolved && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} />}
             {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} />}
             <div ref={messagesEndRef} />
           </div>
 
+          {isResolved ? (
+            <ResolvedFooter onReset={conversation.reset} />
+          ) : (
           <div
             className="px-4 py-3 flex items-end gap-2 flex-shrink-0"
             style={{ background: palette.surface, borderTop: `1px solid ${palette.border}` }}
@@ -312,6 +345,7 @@ const Panel = ({ onClose, conversation }) => {
               <Send size={16} />
             </button>
           </div>
+          )}
         </>
       ) : (
         <NotReadyBody />
@@ -328,15 +362,21 @@ const Panel = ({ onClose, conversation }) => {
   );
 };
 
-export const GlobalTemplate = ({ isOpen, onOpen, onClose, conversation }) => (
-  <>
-    <style>{`
-      @keyframes cw-global-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-      @keyframes cw-global-slide-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    `}</style>
-    <FloatingButton onClick={onOpen} unreadCount={0} />
-    {isOpen && <Panel onClose={onClose} conversation={conversation} />}
-  </>
-);
+export const GlobalTemplate = ({ isOpen, onOpen, onClose, conversation, initialChatOptions }) => {
+  // Unread badge driven by API.md §4.3 `unread_count`. Hidden when the
+  // panel is open or the adapter isn't ready yet.
+  const ready = conversation.status === 'ready';
+  const fabUnread = ready && !isOpen ? conversation.unreadCount : 0;
+  return (
+    <>
+      <style>{`
+        @keyframes cw-global-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+        @keyframes cw-global-slide-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+      <FloatingButton onClick={onOpen} unreadCount={fabUnread} />
+      {isOpen && <Panel onClose={onClose} conversation={conversation} initialChatOptions={initialChatOptions} />}
+    </>
+  );
+};
 
 export default GlobalTemplate;

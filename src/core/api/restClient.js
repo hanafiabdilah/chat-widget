@@ -64,6 +64,27 @@ export const createRestClient = ({ baseUrl, fetchImpl } = {}) => {
       fetchImpl,
     }),
 
+    // GET /widget-api/session/{sessionToken}
+    // Lightweight status check — returns conversation status, agent,
+    // last_seen_at, and unread_count. Used at boot and as a polling
+    // fallback if the WebSocket disconnects.
+    getSession: (sessionToken) => request({
+      baseUrl,
+      path: `/widget-api/session/${encodeURIComponent(sessionToken)}`,
+      fetchImpl,
+    }),
+
+    // POST /widget-api/session/{sessionToken}/seen
+    // Updates `last_seen_at`; subsequent /session responses will have
+    // unread_count: 0 until a new outgoing message arrives.
+    markSeen: (sessionToken) => request({
+      baseUrl,
+      path: `/widget-api/session/${encodeURIComponent(sessionToken)}/seen`,
+      method: 'POST',
+      body: {},
+      fetchImpl,
+    }),
+
     // GET /widget-api/session/{sessionToken}/messages
     getHistory: (sessionToken) => request({
       baseUrl,

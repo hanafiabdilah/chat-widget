@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { templates } from './templates/index.js';
 import { createOmnichannelAdapter } from './core/adapters/omnichannelAdapter.js';
 import { useConversation } from './core/useConversation.js';
@@ -74,6 +74,16 @@ export const ChatWidget = ({
   // Hook order must stay stable, so all hooks are called unconditionally
   // and the render-gate checks happen below.
   const conversation = useConversation(resolvedAdapter);
+
+  // When the panel opens, mark the conversation as seen so the
+  // server-side `unread_count` resets. Conversation lifecycle changes
+  // (e.g. agent resolves the chat) arrive separately via the WS
+  // `conversation-status-changed` event, so no /session refetch here.
+  useEffect(() => {
+    if (!isOpen || conversation.status !== 'ready') return;
+    if (conversation.unreadCount > 0) conversation.markSeen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, conversation.status]);
   const mergedTheme = useMemo(() => {
     if (!theme) return undefined;
     const accent = conversation.config?.brand?.accentColor;

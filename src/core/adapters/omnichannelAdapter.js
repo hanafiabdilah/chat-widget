@@ -5,17 +5,19 @@
 //   2. Bootstrap session:
 //        - If localStorage has a session_token  → GET history
 //        - Else                                  → POST session, store token
-//   3. Open Reverb WebSocket subscription on `widget-session.{token}`
+//   3. GET /widget-api/session/{token}      → conversation status, agent, unread
+//   4. Open Reverb WebSocket subscription on `widget-session.{token}`
 //      and forward `widget-message-received` events as MessageResource.
 //
 // Outbound:
 //   - send(text)              → POST /widget-api/session/{token}/messages
-//   - selectQuickReply(reply) → same endpoint; we forward the visible label.
+//                               (no-op if conversation is `resolved`)
+//   - markSeen()              → POST /widget-api/session/{token}/seen
+//   - reset()                 → clear local token + bootstrap fresh session
 //
 // Reset / 404 handling:
-//   - If the backend returns 404 on history/send, the saved session_token is
-//     stale (deleted server-side). We clear localStorage and bootstrap a new
-//     session transparently.
+//   - 404 on history/send → clear localStorage and bootstrap a new session.
+//   - reset() is the manual equivalent for "Start new conversation" buttons.
 
 import { createRestClient, ApiError } from '../api/restClient.js';
 import { createRealtimeClient } from '../api/realtimeClient.js';
@@ -23,6 +25,10 @@ import { createWidgetStorage } from '../api/storage.js';
 import { mapMessage, agentFromResource } from '../api/messageMapper.js';
 
 const WIDGET_EVENT = 'widget-message-received';
+// Status change broadcast (API.md §5.2b). Fires on accept / resolve /
+// other lifecycle transitions. Payload shape:
+//   { conversation_id, old_status, new_status, agent, changed_at }
+const STATUS_EVENT = 'widget-conversation-status-changed';
 // Stable client-side id for the synthetic greeting we materialise from
 // `connection.accept_message`. Strings can't collide with server-side
 // numeric MessageResource ids, so the upsert dedupe in useConversation
@@ -37,10 +43,22 @@ const nowHHMM = () => {
   return `${padTwo(d.getHours())}:${padTwo(d.getMinutes())}`;
 };
 
-// MessageResource has no notion of "id is temporary" — we use a numeric-id
-// presence check to upsert. Server ids are always numbers; our optimistic
-// placeholders use a `temp-` string prefix so they never collide.
-const isServerId = (id) => typeof id === 'number';
+// Build an Agent object from the API.md §4.3 `conversation.agent` shape.
+// Mirrors `messageMapper.agentFromResource` so the header avatar / name
+// stays consistent whether the agent info came from a message sender or
+// the session status check.
+const agentFromSession = (rawAgent) => {
+  if (!rawAgent || !rawAgent.name) return null;
+  const name = String(rawAgent.name).trim();
+  const parts = name.split(/\s+/);
+  const initials = (parts[0]?.[0] || '') + (parts[1]?.[0] || '');
+  return {
+    type: 'human',
+    name,
+    role: 'Suporte',
+    initials: initials.toUpperCase() || name.slice(0, 2).toUpperCase(),
+  };
+};
 
 export const createOmnichannelAdapter = ({
   appId,
@@ -98,11 +116,35 @@ export const createOmnichannelAdapter = ({
     });
   };
 
+  // Pushes the API.md §4.3 session response shape to the host. Hooks
+  // consume this to render the agent badge ("Agent Sari is helping you"),
+  // the unread count on the FAB, and the resolved-state CTA.
+  const emitSession = (sessionRes) => {
+    if (!sessionRes) return;
+    const conv = sessionRes.conversation || {};
+    state.conversationStatus = conv.status || null;
+    handlers.onSession?.({
+      conversationId: conv.id || null,
+      status: conv.status || null,
+      unreadCount: typeof sessionRes.unread_count === 'number' ? sessionRes.unread_count : 0,
+      lastSeenAt: sessionRes.session?.last_seen_at || null,
+      agent: agentFromSession(conv.agent),
+      raw: sessionRes,
+    });
+    const agent = agentFromSession(conv.agent);
+    if (agent) handlers.onAgent?.(agent);
+  };
+
   const openRealtime = (rtConfig, sessionToken) => {
     if (!rtConfig || !rtConfig.key || !rtConfig.host) {
-      log('skip realtime — config missing');
+      log('skip realtime — config missing', rtConfig);
       return;
     }
+    const wsScheme = rtConfig.scheme === 'https' ? 'wss' : 'ws';
+    const portStr = rtConfig.port ? `:${rtConfig.port}` : '';
+    log('openRealtime',
+      `${wsScheme}://${rtConfig.host}${portStr}/app/${rtConfig.key}`,
+      `channel: widget-session.${sessionToken}`);
     realtime = createRealtimeClient({
       host: rtConfig.host,
       port: rtConfig.port,
@@ -111,9 +153,48 @@ export const createOmnichannelAdapter = ({
       debug,
     });
     unsubscribeChannel = realtime.subscribe(channelName(sessionToken), (event, data) => {
-      if (event !== WIDGET_EVENT) return;
-      // Per API.md, the broadcast payload IS a MessageResource.
-      emitMessage(data);
+      // Laravel's Pusher broadcaster MAY prefix the event with a dot when
+      // `broadcastAs()` is used (per Echo's `.event-name` convention). We
+      // accept both forms to stay robust regardless of the server's quirk.
+      const normalized = typeof event === 'string' && event.startsWith('.') ? event.slice(1) : event;
+
+      if (normalized === WIDGET_EVENT) {
+        log('received', WIDGET_EVENT, data?.id);
+        // Per API.md, the broadcast payload IS a MessageResource.
+        emitMessage(data);
+        // Agent reply increments unread (visitor hasn't seen this yet unless
+        // they explicitly mark seen). We don't refetch /session — we just
+        // bump locally for the FAB badge. The next markSeen() resets it.
+        if (data?.sender_type === 'outgoing') {
+          handlers.onUnreadIncrement?.();
+        }
+        return;
+      }
+
+      if (normalized === STATUS_EVENT) {
+        // Per API.md §5.2b payload:
+        //   { conversation_id, old_status, new_status, agent, changed_at }
+        log('status changed', data?.old_status, '→', data?.new_status, 'agent:', data?.agent?.name);
+        const newStatus = data?.new_status;
+        if (newStatus) {
+          state.conversationStatus = newStatus;
+          handlers.onSession?.({
+            conversationId: data.conversation_id || null,
+            status: newStatus,
+            agent: agentFromSession(data.agent),
+            raw: data,
+          });
+          // When an agent accepts the conversation, the payload carries
+          // the assigned agent — bubble it up so the header avatar /
+          // name updates instantly (instead of waiting for their first
+          // message to flow through emitMessage).
+          const agent = agentFromSession(data.agent);
+          if (agent) handlers.onAgent?.(agent);
+        }
+        return;
+      }
+
+      log('ignoring event', event);
     });
   };
 
@@ -145,6 +226,38 @@ export const createOmnichannelAdapter = ({
     }
   };
 
+  // Fetch session status (API.md §4.3). 404 means the token is dead and
+  // we should bootstrap fresh (same recovery path as history). Other errors
+  // fail soft — the visitor can still chat, we just won't show the agent
+  // badge / unread count until next reconnect.
+  const loadSessionStatus = async (sessionToken) => {
+    try {
+      log('GET session', `${baseUrl}/widget-api/session/${sessionToken}`);
+      const result = await api.getSession(sessionToken);
+      if (stopped) return { ok: true };
+      log('session status', result?.conversation?.status, 'unread:', result?.unread_count);
+      emitSession(result);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        log('session 404 → resetting');
+        storage.clearSessionToken();
+        return { ok: false };
+      }
+      log('session status failed', err);
+      return { ok: true };
+    }
+  };
+
+  // Public-facing wrapper used by:
+  //   - WS `conversation-status-changed` event when no embedded status
+  //   - Host calling `conversation.refreshStatus()` (e.g. on panel open)
+  // Bails if we don't have a session token yet (boot still pending).
+  const refreshSessionStatus = async () => {
+    if (!state.sessionToken) return;
+    await loadSessionStatus(state.sessionToken);
+  };
+
   // Inject the dashboard-configured greeting as the conversation's first
   // bot bubble. Only emitted when there's no real history yet, so it never
   // shadows an actual agent message on returning visits.
@@ -160,15 +273,14 @@ export const createOmnichannelAdapter = ({
     });
   };
 
-  // Returns { token, historyCount }. `historyCount = 0` covers both
-  // brand-new sessions (just created via POST) and existing sessions that
-  // happen to have no messages yet — both are valid triggers for the
-  // accept_message greeting.
+  // Returns { token, historyCount, fresh }. `fresh=true` means we just
+  // created the session (no existing token), so `getSession` after this
+  // is just for unread/agent — there's no resolved-state to worry about.
   const bootstrapSession = async () => {
     const existing = storage.getSessionToken();
     if (existing) {
       const { ok, count } = await loadHistory(existing);
-      if (ok) return { token: existing, historyCount: count };
+      if (ok) return { token: existing, historyCount: count, fresh: false };
       // history said the token was bad — fall through and create a new one.
     }
 
@@ -182,7 +294,7 @@ export const createOmnichannelAdapter = ({
     const result = await api.createSession(appId, payload);
     if (!result?.session_token) throw new Error('createSession returned no token');
     storage.setSessionToken(result.session_token);
-    return { token: result.session_token, historyCount: 0 };
+    return { token: result.session_token, historyCount: 0, fresh: true };
   };
 
   // Map an ApiError from a boot-time call to a lifecycle status. 422 / 403
@@ -217,7 +329,7 @@ export const createOmnichannelAdapter = ({
     let session;
     try {
       session = await bootstrapSession();
-      log('session ready', { token: session.token, historyCount: session.historyCount });
+      log('session ready', { token: session.token, historyCount: session.historyCount, fresh: session.fresh });
     } catch (err) {
       log('session failed', err.status, err.body || err.message);
       handlers.onStatus?.(statusForBootError(err), err);
@@ -231,21 +343,45 @@ export const createOmnichannelAdapter = ({
     // genuinely empty (no historical messages from the visitor's prior visits).
     if (session.historyCount === 0) emitAcceptMessage(config);
 
-    openRealtime(config.realtime, session.token);
-
     // Stash for outbound calls. Captured via closure to avoid stale refs.
     state.sessionToken = session.token;
+
+    // Fetch session status (unread, agent, conversation.status). Skipping
+    // this on a freshly created session is a small optimisation — a new
+    // session is always { status: 'pending', unread: 0, agent: null } so
+    // we save one round trip during the typical first-visit flow.
+    if (!session.fresh) {
+      const statusResult = await loadSessionStatus(session.token);
+      if (stopped) return;
+      if (!statusResult.ok) {
+        // Token rejected by /session — rebuild from scratch.
+        const fresh = await bootstrapSession();
+        if (stopped) return;
+        if (fresh.historyCount === 0) emitAcceptMessage(config);
+        state.sessionToken = fresh.token;
+        session = fresh;
+      }
+    }
+
+    openRealtime(config.realtime, session.token);
     handlers.onStatus?.('ready');
     log('ready');
   };
 
   // Mutable shared state — exposed only inside this factory so `send` can
   // see the token resolved by the async `boot` flow.
-  const state = { sessionToken: null };
+  const state = { sessionToken: null, conversationStatus: null };
 
   const postMessage = async (text) => {
     if (!state.sessionToken) {
       log('send called before session ready — dropping');
+      return;
+    }
+    // Block sends once the conversation is resolved. The host's reset()
+    // call is the only way out — this matches the "tunggu visitor klik
+    // reset" decision from product.
+    if (state.conversationStatus === 'resolved') {
+      log('send blocked — conversation resolved');
       return;
     }
     try {
@@ -274,6 +410,41 @@ export const createOmnichannelAdapter = ({
       log('send failed', err);
       handlers.onError?.(err);
     }
+  };
+
+  // Sends `POST /seen` so subsequent /session calls return unread_count: 0.
+  // Safe to call repeatedly — backend is idempotent. We also locally clear
+  // the unread badge so the UI updates immediately without waiting for the
+  // server roundtrip.
+  const markSeen = async () => {
+    if (!state.sessionToken) return;
+    handlers.onUnreadReset?.();
+    try {
+      log('POST seen', `${baseUrl}/widget-api/session/${state.sessionToken}/seen`);
+      await api.markSeen(state.sessionToken);
+    } catch (err) {
+      log('seen failed', err);
+      // Non-fatal — the local unread reset is already applied.
+    }
+  };
+
+  // Clears the session token and re-bootstraps. Used as the "Start a new
+  // conversation" CTA when status is resolved, or as an escape hatch the
+  // host can wire to its own logout/clear flow.
+  const reset = async () => {
+    log('reset requested');
+    storage.clearSessionToken();
+    state.sessionToken = null;
+    state.conversationStatus = null;
+    // Tear down the existing realtime subscription — the new session has
+    // a different token and therefore a different channel.
+    if (unsubscribeChannel) { try { unsubscribeChannel(); } catch (_e) {} unsubscribeChannel = null; }
+    if (realtime) { try { realtime.close(); } catch (_e) {} realtime = null; }
+    // Re-run boot; the host's useConversation hook listens for state
+    // updates as they're emitted (config, messages, status), so the UI
+    // refreshes without needing a remount.
+    handlers.onReset?.();
+    boot();
   };
 
   return {
@@ -306,6 +477,10 @@ export const createOmnichannelAdapter = ({
       // backend's flow rules / agents handle interpretation.
       postMessage(reply.label);
     },
+
+    markSeen,
+    reset,
+    refreshStatus: refreshSessionStatus,
   };
 };
 

@@ -4,24 +4,25 @@
  * Scoped reset for elements rendered inside the widget. We can't rely on
  * Tailwind preflight (it would normalize the host page's elements too,
  * which is hostile to embedders), so we apply targeted resets only to
- * children of `.cw-root` — the wrapper each template applies to its
- * outermost fixed-position elements.
+ * children of `.cw-root`.
  *
- * Without this, native browser styles bleed through on <button> and
- * <input> (default borders, system fonts, button background, etc.).
+ * IMPORTANT: every selector below is wrapped in `:where(.cw-root)` so the
+ * `.cw-root` part contributes ZERO specificity. The total specificity
+ * stays at the element level (e.g. `button` = 0,0,1), so any Tailwind
+ * utility class like `.p-2` (0,1,0) cleanly overrides this reset. Without
+ * the `:where()`, `.cw-root button` (0,1,1) would beat Tailwind utilities
+ * and our reset would silently zero out padding/margin everywhere.
  */
-.cw-root {
+:where(.cw-root) {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-.cw-root *,
-.cw-root *::before,
-.cw-root *::after {
+:where(.cw-root, .cw-root *, .cw-root *::before, .cw-root *::after) {
   box-sizing: border-box;
 }
-.cw-root button {
+:where(.cw-root) button {
   border: 0;
   margin: 0;
   padding: 0;
@@ -35,11 +36,11 @@
   -moz-appearance: none;
   appearance: none;
 }
-.cw-root button:disabled {
+:where(.cw-root) button:disabled {
   cursor: not-allowed;
 }
-.cw-root input,
-.cw-root textarea {
+:where(.cw-root) input,
+:where(.cw-root) textarea {
   border: 0;
   margin: 0;
   padding: 0;
@@ -51,13 +52,13 @@
   -moz-appearance: none;
   appearance: none;
 }
-.cw-root input:focus,
-.cw-root textarea:focus,
-.cw-root button:focus {
+:where(.cw-root) input:focus,
+:where(.cw-root) textarea:focus,
+:where(.cw-root) button:focus {
   outline: none;
 }
-.cw-root input::placeholder,
-.cw-root textarea::placeholder {
+:where(.cw-root) input::placeholder,
+:where(.cw-root) textarea::placeholder {
   color: inherit;
   opacity: 0.55;
 }
