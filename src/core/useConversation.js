@@ -86,8 +86,19 @@ export const useConversation = (adapter) => {
     return typeof cleanup === 'function' ? cleanup : undefined;
   }, [adapter]);
 
-  const sendMessage = useCallback((text) => {
-    adapterRef.current?.send?.(text);
+  // `sendMessage(text)` or `sendMessage(text, { attachmentUrl })` — the
+  // adapter handles both legacy and attachment-aware call shapes.
+  const sendMessage = useCallback((text, opts) => {
+    adapterRef.current?.send?.(text, opts);
+  }, []);
+
+  // Multipart upload — resolves to `{ url, message_type, filename,
+  // mime_type, size, expires_at }`. Templates upload first, then call
+  // `sendMessage(caption, { attachmentUrl: url })` to dispatch.
+  const uploadAttachment = useCallback((file) => {
+    const fn = adapterRef.current?.uploadAttachment;
+    if (!fn) return Promise.reject(new Error('adapter does not support uploads'));
+    return fn(file);
   }, []);
 
   const selectQuickReply = useCallback((reply) => {
@@ -126,6 +137,7 @@ export const useConversation = (adapter) => {
     unreadCount,
     sendMessage,
     selectQuickReply,
+    uploadAttachment,
     markSeen,
     reset,
     refreshStatus,

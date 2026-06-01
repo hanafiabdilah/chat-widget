@@ -58,11 +58,10 @@ export const mapMessage = (resource, { locale } = {}) => {
     from = resource.sender?.source === 'human' ? 'human' : 'bot';
   }
 
-  let text = resource.body || '';
-  if (!text && resource.message_type && resource.message_type !== 'text') {
-    // Media-only message — render a placeholder so the bubble isn't empty.
-    text = `[${resource.message_type}]`;
-  }
+  // Caption is `body`; we DON'T fabricate `[image]` text anymore because
+  // the bubble renders the attachment inline via AttachmentRenderer, and
+  // a bracketed placeholder would just be visual noise next to it.
+  const text = resource.body || '';
 
   return {
     id: resource.id,
@@ -72,7 +71,14 @@ export const mapMessage = (resource, { locale } = {}) => {
     seen: !isIncoming ? undefined : !!resource.read_at,
     editedAt: resource.edited_at || null,
     unsendAt: resource.unsend_at || null,
+    // Type tag the template uses to pick a renderer (text / image / audio /
+    // video / document). Backend is the only source of truth — visitors
+    // can't spoof message_type.
+    messageType: resource.message_type || 'text',
     attachmentUrl: resource.attachment_url || null,
+    // `meta` for attachments contains `{ filename, mime_type, size }` per
+    // API.md §4.6 response. Useful for document download UI.
+    attachmentMeta: resource.meta || null,
     agent: agentFromResource(resource),
     _raw: resource,
   };

@@ -1,8 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Bot, Check, CheckCheck, MessageCircle, Paperclip, RotateCcw, Send, Smile, X,
+  Bot, Check, CheckCheck, FileText, Loader2, MessageCircle, Paperclip,
+  RotateCcw, Send, Smile, Upload, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
+
+// Pretty-prints a file size in KB / MB. Used in attachment chips and the
+// document renderer; rough precision is fine for UI.
+const formatSize = (bytes) => {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 // ProxyBR-branded template. Consumes the host project's theme object (`t`)
 // so colors stay consistent with the rest of the dashboard. All chat state
@@ -99,9 +109,88 @@ const Avatar = ({ agent, size = 32, t }) => {
   );
 };
 
+// Renders the attachment inline inside a message bubble. The picker for
+// which element to render (img / audio / video / document chip) is
+// driven by `messageType` returned by the backend — we never trust the
+// MIME guess from the client.
+const AttachmentBlock = ({ url, messageType, meta, t, isClient }) => {
+  if (!url) return null;
+  if (messageType === 'image') {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="block" style={{ marginBottom: 4 }}>
+        <img
+          src={url}
+          alt={meta?.filename || 'attachment'}
+          style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 8, display: 'block' }}
+        />
+      </a>
+    );
+  }
+  if (messageType === 'video') {
+    return (
+      <video
+        controls
+        src={url}
+        style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 8, display: 'block', marginBottom: 4 }}
+      />
+    );
+  }
+  if (messageType === 'audio') {
+    return (
+      <audio
+        controls
+        src={url}
+        style={{ width: '100%', display: 'block', marginBottom: 4 }}
+      />
+    );
+  }
+  // Document / unknown: file chip with download link. Color tracks the
+  // bubble side — client bubbles use accent contrast, agent bubbles use
+  // the muted surface palette.
+  const fg = isClient ? t.accentText : t.text;
+  const fgMuted = isClient ? `${t.accentText}99` : t.textFaint;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={meta?.filename || undefined}
+      className="flex items-center gap-2.5 rounded-lg"
+      style={{
+        padding: 8,
+        background: isClient ? 'rgba(0,0,0,0.08)' : t.bg,
+        border: `1px solid ${isClient ? 'rgba(0,0,0,0.12)' : t.border}`,
+        marginBottom: 4,
+        textDecoration: 'none',
+        color: fg,
+        minWidth: 0,
+      }}
+    >
+      <div
+        className="flex items-center justify-center flex-shrink-0"
+        style={{ width: 32, height: 32, borderRadius: 8, background: isClient ? 'rgba(0,0,0,0.1)' : t.surfaceAlt }}
+      >
+        <FileText size={16} />
+      </div>
+      <div className="flex flex-col min-w-0">
+        <div className="text-[12px] truncate" style={{ color: fg, maxWidth: 200 }}>
+          {meta?.filename || 'arquivo'}
+        </div>
+        {meta?.size != null && (
+          <div className="font-mono text-[10px]" style={{ color: fgMuted }}>
+            {formatSize(meta.size)}
+          </div>
+        )}
+      </div>
+    </a>
+  );
+};
+
 const MessageBubble = ({ msg, agentForMessage, t }) => {
   const isClient = msg.from === 'client';
   const agent = isClient ? null : agentForMessage;
+  const hasAttachment = !!msg.attachmentUrl && msg.messageType && msg.messageType !== 'text';
+  const hasCaption = msg.text && msg.text.trim().length > 0;
   return (
     <div className={`flex gap-2 ${isClient ? 'flex-row-reverse' : 'flex-row'}`} style={{ marginBottom: 14 }}>
       {!isClient && <Avatar agent={agent} size={28} t={t} />}
@@ -112,8 +201,11 @@ const MessageBubble = ({ msg, agentForMessage, t }) => {
           </div>
         )}
         <div
-          className="rounded-lg px-3 py-2"
+          className="rounded-lg"
           style={{
+            // Tighter padding for media bubbles so the attachment fills
+            // edge-to-edge; text-only keeps the chat-bubble feel.
+            padding: hasAttachment && !hasCaption ? 4 : '6px 12px',
             background: isClient ? t.accent : t.surfaceAlt,
             color: isClient ? t.accentText : t.text,
             border: isClient ? 'none' : `1px solid ${t.borderSubtle || t.border}`,
@@ -121,7 +213,18 @@ const MessageBubble = ({ msg, agentForMessage, t }) => {
             borderTopLeftRadius: isClient ? 8 : 4,
           }}
         >
-          <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.text}</div>
+          {hasAttachment && (
+            <AttachmentBlock
+              url={msg.attachmentUrl}
+              messageType={msg.messageType}
+              meta={msg.attachmentMeta}
+              t={t}
+              isClient={isClient}
+            />
+          )}
+          {hasCaption && (
+            <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.text}</div>
+          )}
         </div>
         <div className="font-mono text-[10px] mt-1 px-1 flex items-center gap-1" style={{ color: t.textFaint }}>
           {msg.time}
@@ -131,6 +234,95 @@ const MessageBubble = ({ msg, agentForMessage, t }) => {
     </div>
   );
 };
+
+// Bar shown above the input while an attachment is staged for sending.
+// Three visual states match adapter lifecycle: uploading (spinner),
+// ready (full preview), failed (error chip with retry). Visitor can
+// cancel at any state.
+const AttachmentPreview = ({ pending, onCancel, t }) => {
+  const { file, localUrl, status, uploaded } = pending;
+  const guessedType = uploaded?.message_type || (
+    file.type.startsWith('image/') ? 'image'
+      : file.type.startsWith('video/') ? 'video'
+        : file.type.startsWith('audio/') ? 'audio'
+          : 'document'
+  );
+  return (
+    <div
+      className="flex items-center gap-3 px-3 py-2 flex-shrink-0"
+      style={{
+        background: t.surfaceAlt,
+        borderTop: `1px solid ${t.borderSubtle || t.border}`,
+        borderBottom: `1px solid ${t.borderSubtle || t.border}`,
+      }}
+    >
+      {guessedType === 'image' ? (
+        <img
+          src={localUrl}
+          alt={file.name}
+          style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center flex-shrink-0"
+          style={{ width: 44, height: 44, borderRadius: 6, background: t.bg, border: `1px solid ${t.border}`, color: t.textMuted }}
+        >
+          <FileText size={18} />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] truncate" style={{ color: t.text }}>{file.name}</div>
+        <div className="font-mono text-[10px] flex items-center gap-1.5" style={{ color: t.textFaint }}>
+          {status === 'uploading' && (
+            <>
+              <Loader2 size={10} className="animate-spin" />
+              Enviando…
+            </>
+          )}
+          {status === 'ready' && (
+            <span>{formatSize(file.size)} · pronto</span>
+          )}
+          {status === 'failed' && (
+            <span style={{ color: t.danger }}>Falhou ao enviar — cancele e tente novamente</span>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="p-1 rounded transition-colors"
+        style={{ color: t.textMuted }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = t.text; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = t.textMuted; }}
+        aria-label="Cancelar anexo"
+        title="Cancelar"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+};
+
+// Full-panel translucent overlay shown while a file is being dragged
+// over the panel — purely visual feedback, the drop handler is on the
+// panel root.
+const DropOverlay = ({ t }) => (
+  <div
+    className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
+    style={{
+      zIndex: 2,
+      background: `${t.bg}E6`,
+      border: `2px dashed ${t.accent}`,
+      borderRadius: 14,
+      color: t.accent,
+    }}
+  >
+    <Upload size={32} />
+    <div className="font-mono text-[11px] uppercase mt-2" style={{ letterSpacing: '0.12em' }}>
+      Solte o arquivo aqui
+    </div>
+  </div>
+);
 
 const QuickRepliesRow = ({ options, onSelect, t }) => (
   <div className="flex flex-wrap gap-2 mb-3" style={{ paddingLeft: 36 }}>
@@ -261,18 +453,99 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
   const resolvedStatus = conversation.status !== 'ready'
     ? 'Conectando…'
     : (conversation.currentAgent ? `${conversation.currentAgent.name} · online` : 'Online');
-  const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply } = conversation;
+  const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply, uploadAttachment } = conversation;
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Attachment staging state. Shape:
+  //   null  →  nothing pending
+  //   { file, localUrl, status: 'uploading' | 'ready' | 'failed', uploaded? }
+  // `localUrl` is a blob: URL created via URL.createObjectURL so the
+  // preview can render before the server's signed URL is back. We
+  // revoke it on cancel / successful send to free memory.
+  const [pending, setPending] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
+  // Revoke the blob URL when the panel unmounts so we don't leak object
+  // URLs across mount/unmount cycles.
+  useEffect(() => () => {
+    if (pending?.localUrl) URL.revokeObjectURL(pending.localUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startUpload = (file) => {
+    if (!file) return;
+    if (pending?.localUrl) URL.revokeObjectURL(pending.localUrl);
+    const localUrl = URL.createObjectURL(file);
+    setPending({ file, localUrl, status: 'uploading' });
+    uploadAttachment(file)
+      .then((uploaded) => {
+        setPending((prev) => (prev?.file === file ? { ...prev, status: 'ready', uploaded } : prev));
+      })
+      .catch((err) => {
+        setPending((prev) => (prev?.file === file ? { ...prev, status: 'failed', error: err } : prev));
+      });
+  };
+
+  const cancelPending = () => {
+    if (pending?.localUrl) URL.revokeObjectURL(pending.localUrl);
+    setPending(null);
+  };
+
+  const handlePickFile = () => {
+    fileInputRef.current?.click();
+  };
+  const handleFileInput = (e) => {
+    const file = e.target.files?.[0];
+    if (file) startUpload(file);
+    e.target.value = '';
+  };
+
+  // Native HTML5 drag-and-drop. dragenter/leave fire on every child
+  // element transition which causes flicker, so we ref-count enter/leave
+  // to know when the cursor has actually left the panel.
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragOver(true);
+  };
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOver(false);
+  };
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+  const handleDrop = (e) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) startUpload(file);
+  };
+
+  const canSendCaption = input.trim().length > 0;
+  const canSendAttachment = pending?.status === 'ready';
+  const canSend = canSendCaption || canSendAttachment;
+
   const handleSend = () => {
-    const trimmed = input.trim();
-    if (!trimmed) return;
-    sendMessage(trimmed);
+    if (!canSend) return;
+    const caption = input.trim();
+    if (canSendAttachment) {
+      sendMessage(caption || '', { attachmentUrl: pending.uploaded.url });
+      URL.revokeObjectURL(pending.localUrl);
+      setPending(null);
+      setInput('');
+      return;
+    }
+    sendMessage(caption);
     setInput('');
   };
 
@@ -318,8 +591,20 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
         background: t.bg, border: `1px solid ${t.border}`, borderRadius: 14,
         boxShadow: '0 24px 80px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.3)',
         animation: 'cw-proxybr-slide-up 0.25s ease-out',
+        position: 'fixed',
       }}
+      onDragEnter={isResolved ? undefined : handleDragEnter}
+      onDragLeave={isResolved ? undefined : handleDragLeave}
+      onDragOver={isResolved ? undefined : handleDragOver}
+      onDrop={isResolved ? undefined : handleDrop}
     >
+      {isDragOver && !isResolved && <DropOverlay t={t} />}
+      <input
+        ref={fileInputRef}
+        type="file"
+        onChange={handleFileInput}
+        style={{ display: 'none' }}
+      />
       <div
         className="flex items-center gap-3 px-4 py-3 relative overflow-hidden flex-shrink-0"
         style={{ background: t.surface, borderBottom: `1px solid ${t.border}` }}
@@ -367,47 +652,61 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
           {isResolved ? (
             <ResolvedFooter t={t} onReset={conversation.reset} />
           ) : (
-          <div
-            className="flex items-end gap-2 px-3 py-3 flex-shrink-0"
-            style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
-          >
-            <button type="button" className="p-2 rounded transition-colors" style={{ color: t.textMuted }} title="Anexar arquivo">
-              <Paperclip size={15} />
-            </button>
+          <>
+            {pending && (
+              <AttachmentPreview pending={pending} onCancel={cancelPending} t={t} />
+            )}
             <div
-              className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg"
-              style={{ background: t.bg, border: `1px solid ${t.border}` }}
+              className="flex items-end gap-2 px-3 py-3 flex-shrink-0"
+              style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
             >
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Digite sua mensagem..."
-                className="flex-1 bg-transparent outline-none text-sm"
-                style={{ color: t.text }}
-              />
-              <button type="button" className="p-0.5 rounded transition-colors" style={{ color: t.textMuted }} title="Emoji">
-                <Smile size={14} />
+              <button
+                type="button"
+                onClick={handlePickFile}
+                className="p-2 rounded transition-colors"
+                style={{ color: t.textMuted }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = t.text; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = t.textMuted; }}
+                title="Anexar arquivo"
+                aria-label="Anexar arquivo"
+              >
+                <Paperclip size={15} />
+              </button>
+              <div
+                className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg"
+                style={{ background: t.bg, border: `1px solid ${t.border}` }}
+              >
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={pending ? 'Adicione uma legenda…' : 'Digite sua mensagem...'}
+                  className="flex-1 bg-transparent outline-none text-sm"
+                  style={{ color: t.text }}
+                />
+                <button type="button" className="p-0.5 rounded transition-colors" style={{ color: t.textMuted }} title="Emoji">
+                  <Smile size={14} />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!canSend}
+                className="flex items-center justify-center transition-all flex-shrink-0"
+                style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: canSend ? t.accent : t.surfaceAlt,
+                  color: canSend ? t.accentText : t.textFaint,
+                  cursor: canSend ? 'pointer' : 'not-allowed',
+                  boxShadow: canSend ? `0 4px 12px ${t.accent}30` : 'none',
+                }}
+                title="Enviar mensagem"
+              >
+                <Send size={15} />
               </button>
             </div>
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="flex items-center justify-center transition-all flex-shrink-0"
-              style={{
-                width: 36, height: 36, borderRadius: 10,
-                background: input.trim() ? t.accent : t.surfaceAlt,
-                color: input.trim() ? t.accentText : t.textFaint,
-                cursor: input.trim() ? 'pointer' : 'not-allowed',
-                boxShadow: input.trim() ? `0 4px 12px ${t.accent}30` : 'none',
-              }}
-              title="Enviar mensagem"
-            >
-              <Send size={15} />
-            </button>
-          </div>
+          </>
           )}
         </>
       ) : (

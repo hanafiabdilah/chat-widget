@@ -372,7 +372,7 @@ export const createOmnichannelAdapter = ({
   // see the token resolved by the async `boot` flow.
   const state = { sessionToken: null, conversationStatus: null };
 
-  const postMessage = async (text) => {
+  const postMessage = async ({ text, attachmentUrl } = {}) => {
     if (!state.sessionToken) {
       log('send called before session ready — dropping');
       return;
@@ -384,9 +384,14 @@ export const createOmnichannelAdapter = ({
       log('send blocked — conversation resolved');
       return;
     }
+    // Backend requires at least one of message or attachment_url.
+    if ((!text || !text.trim()) && !attachmentUrl) return;
     try {
-      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: text });
-      const result = await api.sendMessage(state.sessionToken, text);
+      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: text, attachmentUrl });
+      const result = await api.sendMessage(state.sessionToken, {
+        message: text ? text.trim() : undefined,
+        attachmentUrl,
+      });
       log('message sent', result?.message?.id);
       // The server-echoed message is authoritative — render from this rather
       // than what the user typed. (Realtime channel will also broadcast it,
@@ -410,6 +415,25 @@ export const createOmnichannelAdapter = ({
       log('send failed', err);
       handlers.onError?.(err);
     }
+  };
+
+  // Multipart upload (API.md §4.5). Resolves to the upload payload
+  // (`{ url, message_type, filename, mime_type, size, expires_at }`) which
+  // the host then passes back to `send()` as `attachmentUrl`. Splitting
+  // upload from send is what the API recommends: the UI can show an
+  // optimistic preview the moment the upload completes, then attach a
+  // caption before the visitor actually sends.
+  const uploadAttachment = async (file) => {
+    if (!state.sessionToken) {
+      throw new Error('upload called before session ready');
+    }
+    if (state.conversationStatus === 'resolved') {
+      throw new Error('upload blocked — conversation resolved');
+    }
+    log('POST upload', `${baseUrl}/widget-api/session/${state.sessionToken}/uploads`, file?.name, file?.size);
+    const result = await api.uploadAttachment(state.sessionToken, file);
+    log('upload ok', result?.url);
+    return result;
   };
 
   // Sends `POST /seen` so subsequent /session calls return unread_count: 0.
@@ -464,10 +488,16 @@ export const createOmnichannelAdapter = ({
       };
     },
 
-    send(text) {
-      const trimmed = (text || '').trim();
-      if (!trimmed) return;
-      postMessage(trimmed);
+    // `text` may be a string (text-only) or an options object
+    // `{ text, attachmentUrl }` when sending an attachment with optional
+    // caption. The two-arg variant exists for ergonomic callers that
+    // already prepared an attachment via `uploadAttachment`.
+    send(textOrOpts, opts) {
+      if (typeof textOrOpts === 'string' || textOrOpts == null) {
+        postMessage({ text: textOrOpts || '', attachmentUrl: opts?.attachmentUrl });
+      } else {
+        postMessage({ text: textOrOpts.text || '', attachmentUrl: textOrOpts.attachmentUrl });
+      }
     },
 
     selectQuickReply(reply) {
@@ -475,9 +505,10 @@ export const createOmnichannelAdapter = ({
       // The widget API doesn't have a structured payload endpoint yet, so
       // we forward the visible label as a plain visitor message. The
       // backend's flow rules / agents handle interpretation.
-      postMessage(reply.label);
+      postMessage({ text: reply.label });
     },
 
+    uploadAttachment,
     markSeen,
     reset,
     refreshStatus: refreshSessionStatus,

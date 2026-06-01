@@ -24,7 +24,7 @@ const parseJson = async (response) => {
   try { return JSON.parse(text); } catch (_e) { return { raw: text }; }
 };
 
-const request = async ({ baseUrl, path, method = 'GET', body, fetchImpl }) => {
+const request = async ({ baseUrl, path, method = 'GET', body, formData, fetchImpl }) => {
   const f = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null);
   if (!f) throw new Error('fetch is not available in this environment');
 
@@ -33,7 +33,11 @@ const request = async ({ baseUrl, path, method = 'GET', body, fetchImpl }) => {
     method,
     headers: { Accept: 'application/json' },
   };
-  if (body !== undefined) {
+  if (formData) {
+    // Don't set Content-Type — the browser injects the multipart boundary
+    // automatically. Setting it manually breaks the upload.
+    init.body = formData;
+  } else if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
@@ -92,14 +96,38 @@ export const createRestClient = ({ baseUrl, fetchImpl } = {}) => {
       fetchImpl,
     }),
 
+    // POST /widget-api/session/{sessionToken}/uploads
+    // Multipart upload of a single file. Backend returns a signed URL
+    // valid for ~6 hours that is then passed as `attachment_url` to
+    // sendMessage (API.md §4.5).
+    uploadAttachment: (sessionToken, file) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return request({
+        baseUrl,
+        path: `/widget-api/session/${encodeURIComponent(sessionToken)}/uploads`,
+        method: 'POST',
+        formData: fd,
+        fetchImpl,
+      });
+    },
+
     // POST /widget-api/session/{sessionToken}/messages
-    sendMessage: (sessionToken, message) => request({
-      baseUrl,
-      path: `/widget-api/session/${encodeURIComponent(sessionToken)}/messages`,
-      method: 'POST',
-      body: { message },
-      fetchImpl,
-    }),
+    // `message` (caption / text) and `attachmentUrl` are both optional
+    // individually but at least one is required by the backend (422 if
+    // both empty).
+    sendMessage: (sessionToken, { message, attachmentUrl } = {}) => {
+      const body = {};
+      if (message != null && message !== '') body.message = message;
+      if (attachmentUrl) body.attachment_url = attachmentUrl;
+      return request({
+        baseUrl,
+        path: `/widget-api/session/${encodeURIComponent(sessionToken)}/messages`,
+        method: 'POST',
+        body,
+        fetchImpl,
+      });
+    },
   };
 };
 
