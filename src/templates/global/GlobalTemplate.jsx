@@ -383,7 +383,7 @@ const NotReadyBody = () => (
   </div>
 );
 
-const Panel = ({ onClose, conversation }) => {
+const Panel = ({ onClose, conversation, initialChatOptions }) => {
   // Brand title comes from the API config (`connection.name`).
   const brandTitle = conversation.config?.brand?.title;
   const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply, uploadAttachment } = conversation;
@@ -490,6 +490,16 @@ const Panel = ({ onClose, conversation }) => {
   // "setting up" placeholder so visitors never face a broken-looking chat.
   const isReady = conversation.status === 'ready';
   const isResolved = conversation.conversationStatus === 'resolved';
+  // Host-supplied chat options visible until the visitor sends anything
+  // (typed or via chip — both produce a `from: 'client'` bubble).
+  const visitorHasSpoken = messages.some((m) => m.from === 'client');
+  const showInitialOptions = Array.isArray(initialChatOptions)
+    && initialChatOptions.length > 0
+    && !visitorHasSpoken;
+  const handleSelectOption = (option) => {
+    const text = option.message || option.label;
+    if (text) sendMessage(text);
+  };
 
   return (
     <div
