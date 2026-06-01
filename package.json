@@ -1,0 +1,45 @@
+{
+  "name": "@multichat/chat-widget",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Embeddable React chat widget. Plug into any host app via a single component; supports multiple templates and pluggable adapters (mock, omnichannel).",
+  "license": "UNLICENSED",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "main": "./dist/chat-widget.cjs",
+  "module": "./dist/chat-widget.mjs",
+  "exports": {
+    ".": {
+      "import": "./dist/chat-widget.mjs",
+      "require": "./dist/chat-widget.cjs"
+    },
+    "./styles.css": "./dist/chat-widget.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "lucide-react": ">=0.300.0",
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "lucide-react": "^0.383.0",
+    "postcss": "^8.4.39",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.3.3"
+  }
+}
