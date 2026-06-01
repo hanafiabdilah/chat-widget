@@ -153,6 +153,36 @@ const TypingIndicator = ({ agent }) => (
   </div>
 );
 
+// Quick-reply chips driven by the host-supplied `initialChatOptions`
+// prop. Shown above the input until the visitor sends their first
+// message; clicking one fires a normal `POST /messages`, so the agent
+// receives it identically to a typed message.
+const InitialOptionsRow = ({ options, onSelect }) => (
+  <div className="flex flex-wrap gap-2 mb-3" style={{ paddingLeft: 36 }}>
+    {options.map((option) => {
+      const color = option.color || palette.accent;
+      return (
+        <div
+          key={option.id}
+          onClick={() => onSelect(option)}
+          className="px-3 cursor-pointer py-1.5 text-xs transition-colors"
+          style={{
+            background: palette.bg,
+            color,
+            border: `1px solid ${color}`,
+            borderRadius: 999,
+            fontWeight: 500,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = color; e.currentTarget.style.color = palette.bg; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = palette.bg; e.currentTarget.style.color = color; }}
+        >
+          {option.label}
+        </div>
+      );
+    })}
+  </div>
+);
+
 // Placeholder body shown until the adapter reports `status: 'ready'`
 // (covers normal config/session loading AND the 422 invalid-app_id case).
 // Deliberately neutral so a misconfigured embed reads as "still warming

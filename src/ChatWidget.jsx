@@ -33,6 +33,10 @@ export const ChatWidget = ({
   onClose,
   user,
   theme,
+  // Host-defined quick-reply chips. Shown above the input until the
+  // visitor sends their first message. Each option: { id, label, color?,
+  // message? }. See `core/types.js > InitialChatOption`.
+  initialChatOptions,
   debug = false,
 }) => {
   // The host typically passes `user` as an inline object literal, which
@@ -119,6 +123,7 @@ export const ChatWidget = ({
       theme={mergedTheme}
       conversation={conversation}
       user={user}
+      initialChatOptions={initialChatOptions}
     />
   );
 };

@@ -25,6 +25,26 @@
  */
 
 /**
+ * Host-supplied chips shown above the input until the visitor has sent
+ * their first message. Clicking one fires a normal POST through the
+ * widget API — there's no special endpoint, the label (or `message`
+ * override) is what the agent receives.
+ *
+ * @typedef {Object} InitialChatOption
+ * @property {string} id              Stable key — used for React reconciliation.
+ * @property {string} label           Text shown on the chip, also the
+ *                                    default text sent when clicked.
+ * @property {string} [message]       Override the sent message text. Useful
+ *                                    when you want a short chip label but a
+ *                                    fuller message goes to the agent
+ *                                    (e.g. "Pricing" → "I'd like to know
+ *                                    more about your pricing plans").
+ * @property {string} [color]         Hex color used for the chip's accent
+ *                                    (border + text; templates compose the
+ *                                    fill from this).
+ */
+
+/**
  * @typedef {Object} QuickReply
  * @property {string} id
  * @property {string} label

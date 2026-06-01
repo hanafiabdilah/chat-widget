@@ -52,6 +52,12 @@ const Playground = () => {
         onOpen={() => setIsOpen(true)}
         onClose={() => setIsOpen(false)}
         user={{ name: 'Anderson', email: 'anderson@example.com' }}
+        initialChatOptions={[
+          { id: 'pricing', label: '💰 Tanya harga', color: '#22c55e' },
+          { id: 'support', label: '⚠️ Bantuan teknis', color: '#f59e0b' },
+          { id: 'demo', label: '🎥 Minta demo', color: '#06b6d4', message: 'Halo, saya ingin minta demo produk.' },
+          { id: 'human', label: '🎧 Bicara dengan agent', color: '#a855f7' },
+        ]}
         debug
       />
     </div>

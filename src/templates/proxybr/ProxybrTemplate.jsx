@@ -175,6 +175,30 @@ const TypingIndicator = ({ agent, t }) => (
   </div>
 );
 
+// Quick-reply chips driven by the host-supplied `initialChatOptions`
+// prop. Shown above the input until the visitor sends their first
+// message; clicking one fires a normal `POST /messages`, so the agent
+// receives it identically to a typed message.
+const InitialOptionsRow = ({ options, onSelect, t }) => (
+  <div className="space-y-2" style={{ paddingLeft: 36 }}>
+    {options.map((option) => {
+      const color = option.color || t.accent;
+      return (
+        <div
+          key={option.id}
+          onClick={() => onSelect(option)}
+          className="px-2.5 py-1.5 cursor-pointer rounded-full font-mono text-[10px] uppercase flex items-center gap-1.5 transition-all"
+          style={{ background: `${color}10`, color, border: `1px solid ${color}40`, letterSpacing: '0.1em' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = `${color}25`; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = `${color}10`; }}
+        >
+          {option.label}
+        </div>
+      );
+    })}
+  </div>
+);
+
 // Placeholder shown when the adapter hasn't reported `status: 'ready'` yet
 // (i.e. still loading config / session, or got a 422 invalid app_id from
 // the backend). Intentionally generic — no error text, no retry button —
@@ -199,7 +223,7 @@ const NotReadyBody = ({ t }) => (
   </div>
 );
 
-const Panel = ({ t, onClose, conversation }) => {
+const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
   // Brand title comes from the API config (`connection.name`). Falls back
   // to the current agent name, then to a generic label when neither is
   // available yet (e.g. during boot or with an invalid app_id).
@@ -234,6 +258,20 @@ const Panel = ({ t, onClose, conversation }) => {
   // Quick replies are tied to the first bot message — show them inline
   // right under it (matches the previous SupportChat behaviour).
   const showQuickReplies = quickReplies && quickReplies.length > 0 && messages.length <= 1;
+  // Host-defined chat options stay visible until the visitor sends their
+  // first message (whether via input or by tapping a chip — that fires the
+  // same POST under the hood and adds a `from: 'client'` bubble).
+  const visitorHasSpoken = messages.some((m) => m.from === 'client');
+  const showInitialOptions = Array.isArray(initialChatOptions)
+    && initialChatOptions.length > 0
+    && !visitorHasSpoken;
+
+  // Tapping an option just sends its message text via the adapter — there's
+  // no special endpoint, so the agent sees it identically to typed input.
+  const handleSelectOption = (option) => {
+    const text = option.message || option.label;
+    if (text) sendMessage(text);
+  };
   // Only render the live chat surface (history + input) once the adapter
   // says it's ready. Until then (loading, invalid app_id, transient errors)
   // we show a neutral "warming up" placeholder so the embed never looks
@@ -289,6 +327,7 @@ const Panel = ({ t, onClose, conversation }) => {
               <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} />
             ))}
             {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} t={t} />}
+            {showInitialOptions && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} t={t} />}
             {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} t={t} />}
             <div ref={messagesEndRef} />
           </div>
@@ -353,7 +392,7 @@ const Panel = ({ t, onClose, conversation }) => {
 
 // Each template owns both its launcher (FAB) and its panel. The orchestrator
 // only flips `isOpen`; everything visual is local to the template.
-export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation }) => {
+export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation, initialChatOptions }) => {
   // If the host didn't pass a theme, fall back to DEFAULT_THEME so children
   // (FAB, Panel, MessageBubble, etc.) always receive a complete palette.
   // Hosts that DO pass `theme` keep full control.
@@ -377,6 +416,7 @@ export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation }
         t={t}
         onClose={onClose}
         conversation={conversation}
+        initialChatOptions={initialChatOptions}
       />
     )}
   </>
