@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, Send, X } from 'lucide-react';
+import { COPYRIGHT } from '../../core/config.js';
 
 // Brand-neutral Intercom-style template. Does NOT consume the host's `t`
 // theme — uses its own fixed palette so it looks the same regardless of
@@ -30,7 +31,7 @@ const FloatingButton = ({ onClick, unreadCount }) => {
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="fixed z-[45] flex items-center justify-center transition-all"
+      className="cw-root fixed z-[45] flex items-center justify-center transition-all"
       style={{
         bottom: 24, right: 24, width: 56, height: 56, borderRadius: '50%',
         background: palette.accent, color: palette.accentText,
@@ -152,7 +153,32 @@ const TypingIndicator = ({ agent }) => (
   </div>
 );
 
-const Panel = ({ onClose, conversation, brand }) => {
+// Placeholder body shown until the adapter reports `status: 'ready'`
+// (covers normal config/session loading AND the 422 invalid-app_id case).
+// Deliberately neutral so a misconfigured embed reads as "still warming
+// up" rather than "broken" to visitors.
+const NotReadyBody = () => (
+  <div className="flex-1 flex flex-col items-center justify-center px-6" style={{ background: palette.bg }}>
+    <div className="flex items-center gap-1.5 mb-3" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          style={{
+            width: 8, height: 8, borderRadius: '50%', background: palette.textMuted,
+            animation: `cw-global-typing 1.4s ease-in-out ${i * 0.2}s infinite`,
+          }}
+        />
+      ))}
+    </div>
+    <div className="text-xs" style={{ color: palette.textFaint }}>
+      Setting up your chat
+    </div>
+  </div>
+);
+
+const Panel = ({ onClose, conversation }) => {
+  // Brand title comes from the API config (`connection.name`).
+  const brandTitle = conversation.config?.brand?.title;
   const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply } = conversation;
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -169,10 +195,14 @@ const Panel = ({ onClose, conversation, brand }) => {
   };
 
   const showQuickReplies = quickReplies && quickReplies.length > 0 && messages.length <= 1;
+  // Only show the live chat surface once the adapter is ready. Otherwise
+  // (loading, 422 unavailable, transient error) render a neutral
+  // "setting up" placeholder so visitors never face a broken-looking chat.
+  const isReady = conversation.status === 'ready';
 
   return (
     <div
-      className="fixed z-[60] flex flex-col overflow-hidden"
+      className="cw-root fixed z-[60] flex flex-col overflow-hidden"
       style={{
         bottom: 92, right: 24, width: 380, height: 580,
         background: palette.bg, border: `1px solid ${palette.border}`,
@@ -186,11 +216,11 @@ const Panel = ({ onClose, conversation, brand }) => {
       >
         <div className="flex-1 min-w-0">
           <div className="text-base" style={{ color: palette.text, fontWeight: 600 }}>
-            {brand?.title || 'Support'}
+            {brandTitle || currentAgent?.name || 'Support'}
           </div>
           <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: palette.textMuted }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: palette.success }} />
-            {brand?.statusLine || "We're online · replies in ~2 min"}
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: isReady ? palette.success : palette.textFaint }} />
+            {!isReady ? 'Connecting…' : (currentAgent ? `${currentAgent.name} · online` : 'Online')}
           </div>
         </div>
         <button
@@ -206,62 +236,76 @@ const Panel = ({ onClose, conversation, brand }) => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4" style={{ background: palette.bg }}>
-        {messages.map((message) => (
-          <MessageBubble key={message.id} msg={message} agent={currentAgent} />
-        ))}
-        {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} />}
-        {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} />}
-        <div ref={messagesEndRef} />
-      </div>
+      {isReady ? (
+        <>
+          <div className="flex-1 overflow-y-auto px-5 py-4" style={{ background: palette.bg }}>
+            {messages.map((message) => (
+              <MessageBubble key={message.id} msg={message} agent={currentAgent} />
+            ))}
+            {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} />}
+            {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} />}
+            <div ref={messagesEndRef} />
+          </div>
 
+          <div
+            className="px-4 py-3 flex items-end gap-2 flex-shrink-0"
+            style={{ background: palette.surface, borderTop: `1px solid ${palette.border}` }}
+          >
+            <div
+              className="flex-1 flex items-center px-3 py-2"
+              style={{ background: palette.surfaceAlt, borderRadius: 999 }}
+            >
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                placeholder="Write a message..."
+                className="flex-1 bg-transparent outline-none text-sm"
+                style={{ color: palette.text }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="flex items-center justify-center transition-all flex-shrink-0"
+              style={{
+                width: 38, height: 38, borderRadius: '50%',
+                background: input.trim() ? palette.accent : palette.surfaceAlt,
+                color: input.trim() ? palette.accentText : palette.textFaint,
+                cursor: input.trim() ? 'pointer' : 'not-allowed',
+                boxShadow: input.trim() ? `0 6px 16px ${palette.accent}40` : 'none',
+              }}
+              aria-label="Send"
+            >
+              <Send size={16} />
+            </button>
+          </div>
+        </>
+      ) : (
+        <NotReadyBody />
+      )}
       <div
-        className="px-4 py-3 flex items-end gap-2 flex-shrink-0"
-        style={{ background: palette.surface, borderTop: `1px solid ${palette.border}` }}
+        className="flex items-center justify-center py-1.5 flex-shrink-0"
+        style={{ background: palette.surface, borderTop: `1px solid ${palette.borderSubtle || palette.border}` }}
       >
-        <div
-          className="flex-1 flex items-center px-3 py-2"
-          style={{ background: palette.surfaceAlt, borderRadius: 999 }}
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="Write a message..."
-            className="flex-1 bg-transparent outline-none text-sm"
-            style={{ color: palette.text }}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!input.trim()}
-          className="flex items-center justify-center transition-all flex-shrink-0"
-          style={{
-            width: 38, height: 38, borderRadius: '50%',
-            background: input.trim() ? palette.accent : palette.surfaceAlt,
-            color: input.trim() ? palette.accentText : palette.textFaint,
-            cursor: input.trim() ? 'pointer' : 'not-allowed',
-            boxShadow: input.trim() ? `0 6px 16px ${palette.accent}40` : 'none',
-          }}
-          aria-label="Send"
-        >
-          <Send size={16} />
-        </button>
+        <span className="text-[10px]" style={{ color: palette.textFaint }}>
+          {COPYRIGHT}
+        </span>
       </div>
     </div>
   );
 };
 
-export const GlobalTemplate = ({ isOpen, onOpen, onClose, conversation, brand }) => (
+export const GlobalTemplate = ({ isOpen, onOpen, onClose, conversation }) => (
   <>
     <style>{`
       @keyframes cw-global-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
       @keyframes cw-global-slide-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
     `}</style>
-    <FloatingButton onClick={onOpen} unreadCount={isOpen ? 0 : 0} />
-    {isOpen && <Panel onClose={onClose} conversation={conversation} brand={brand} />}
+    <FloatingButton onClick={onOpen} unreadCount={0} />
+    {isOpen && <Panel onClose={onClose} conversation={conversation} />}
   </>
 );
 

@@ -23,8 +23,19 @@ import { createWidgetStorage } from '../api/storage.js';
 import { mapMessage, agentFromResource } from '../api/messageMapper.js';
 
 const WIDGET_EVENT = 'widget-message-received';
+// Stable client-side id for the synthetic greeting we materialise from
+// `connection.accept_message`. Strings can't collide with server-side
+// numeric MessageResource ids, so the upsert dedupe in useConversation
+// treats it as a distinct row.
+const ACCEPT_MESSAGE_ID = 'accept-message';
 
 const channelName = (token) => `widget-session.${token}`;
+
+const padTwo = (n) => String(n).padStart(2, '0');
+const nowHHMM = () => {
+  const d = new Date();
+  return `${padTwo(d.getHours())}:${padTwo(d.getMinutes())}`;
+};
 
 // MessageResource has no notion of "id is temporary" — we use a numeric-id
 // presence check to upsert. Server ids are always numbers; our optimistic
@@ -34,7 +45,12 @@ const isServerId = (id) => typeof id === 'number';
 export const createOmnichannelAdapter = ({
   appId,
   baseUrl,
-  identify,            // { name, email, meta } — optional pre-chat data
+  identify,            // { name, email, meta } — optional static pre-chat data
+  getIdentify,         // () => { name, email, meta } — read lazily at POST
+                       // /session time. Preferred when the host's user object
+                       // identity isn't stable (e.g. inline JSX literals); the
+                       // adapter avoids being recreated on every parent
+                       // re-render.
   pageUrl,             // override; defaults to window.location.href
   fetchImpl,
   locale,              // forwarded to message mapper for time formatting
@@ -101,45 +117,72 @@ export const createOmnichannelAdapter = ({
     });
   };
 
+  // Returns { ok, count }. `ok=false` means the session token was bad and
+  // the caller should bootstrap a fresh one. `count` is the number of
+  // messages successfully fetched — used to decide whether to inject the
+  // `accept_message` greeting (only on truly empty conversations).
   const loadHistory = async (sessionToken) => {
     try {
+      log('GET history', `${baseUrl}/widget-api/session/${sessionToken}/messages`);
       const result = await api.getHistory(sessionToken);
-      if (stopped) return true;
+      if (stopped) return { ok: true, count: 0 };
       const messages = result?.messages || [];
+      log('history loaded', { count: messages.length });
       // API guarantees ASC (oldest first) — forward as-is.
       messages.forEach(emitMessage);
-      return true;
+      return { ok: true, count: messages.length };
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         // Session expired / deleted server-side. Clear and tell the caller
         // to bootstrap fresh.
         log('history 404 → resetting session');
         storage.clearSessionToken();
-        return false;
+        return { ok: false, count: 0 };
       }
       log('history failed', err);
       // Network / 5xx — fail soft: visitor can still send new messages.
-      return true;
+      return { ok: true, count: 0 };
     }
   };
 
+  // Inject the dashboard-configured greeting as the conversation's first
+  // bot bubble. Only emitted when there's no real history yet, so it never
+  // shadows an actual agent message on returning visits.
+  const emitAcceptMessage = (config) => {
+    const text = config?.connection?.accept_message;
+    if (!text) return;
+    handlers.onMessage?.({
+      id: ACCEPT_MESSAGE_ID,
+      from: 'bot',
+      text,
+      time: nowHHMM(),
+      agent: { type: 'bot', name: config.connection.name || 'Suporte' },
+    });
+  };
+
+  // Returns { token, historyCount }. `historyCount = 0` covers both
+  // brand-new sessions (just created via POST) and existing sessions that
+  // happen to have no messages yet — both are valid triggers for the
+  // accept_message greeting.
   const bootstrapSession = async () => {
     const existing = storage.getSessionToken();
     if (existing) {
-      const ok = await loadHistory(existing);
-      if (ok) return existing;
+      const { ok, count } = await loadHistory(existing);
+      if (ok) return { token: existing, historyCount: count };
       // history said the token was bad — fall through and create a new one.
     }
 
+    const identifyData = typeof getIdentify === 'function' ? getIdentify() : identify;
     const payload = {
       visitor_id: storage.getOrCreateVisitorId(),
       page_url: pageUrl || (typeof window !== 'undefined' ? window.location.href : null),
-      ...(identify || {}),
+      ...(identifyData || {}),
     };
+    log('POST session', `${baseUrl}/widget-api/session/${appId}`, payload);
     const result = await api.createSession(appId, payload);
     if (!result?.session_token) throw new Error('createSession returned no token');
     storage.setSessionToken(result.session_token);
-    return result.session_token;
+    return { token: result.session_token, historyCount: 0 };
   };
 
   // Map an ApiError from a boot-time call to a lifecycle status. 422 / 403
@@ -154,13 +197,16 @@ export const createOmnichannelAdapter = ({
   };
 
   const boot = async () => {
+    log('boot start', { appId, baseUrl });
     handlers.onStatus?.('loading');
 
     let config;
     try {
+      log('GET config', `${baseUrl}/widget-api/config/${appId}`);
       config = await api.getConfig(appId);
+      log('config loaded', config);
     } catch (err) {
-      log('config failed', err);
+      log('config failed', err.status, err.body || err.message);
       handlers.onStatus?.(statusForBootError(err), err);
       handlers.onError?.(err);
       return;
@@ -168,22 +214,29 @@ export const createOmnichannelAdapter = ({
     if (stopped) return;
     emitConfig(config);
 
-    let sessionToken;
+    let session;
     try {
-      sessionToken = await bootstrapSession();
+      session = await bootstrapSession();
+      log('session ready', { token: session.token, historyCount: session.historyCount });
     } catch (err) {
-      log('session failed', err);
+      log('session failed', err.status, err.body || err.message);
       handlers.onStatus?.(statusForBootError(err), err);
       handlers.onError?.(err);
       return;
     }
     if (stopped) return;
 
-    openRealtime(config.realtime, sessionToken);
+    // Synthetic greeting AFTER history is loaded so it lands below any real
+    // agent messages chronologically — and only when the conversation is
+    // genuinely empty (no historical messages from the visitor's prior visits).
+    if (session.historyCount === 0) emitAcceptMessage(config);
+
+    openRealtime(config.realtime, session.token);
 
     // Stash for outbound calls. Captured via closure to avoid stale refs.
-    state.sessionToken = sessionToken;
+    state.sessionToken = session.token;
     handlers.onStatus?.('ready');
+    log('ready');
   };
 
   // Mutable shared state — exposed only inside this factory so `send` can
@@ -196,7 +249,9 @@ export const createOmnichannelAdapter = ({
       return;
     }
     try {
+      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: text });
       const result = await api.sendMessage(state.sessionToken, text);
+      log('message sent', result?.message?.id);
       // The server-echoed message is authoritative — render from this rather
       // than what the user typed. (Realtime channel will also broadcast it,
       // but the id dedupe in templates' upsert logic handles that.)
@@ -207,7 +262,7 @@ export const createOmnichannelAdapter = ({
         log('send 404 → re-bootstrapping');
         storage.clearSessionToken();
         state.sessionToken = null;
-        try { await bootstrapSession().then((t) => { state.sessionToken = t; }); } catch (_e) { /* swallow */ }
+        try { await bootstrapSession().then(({ token }) => { state.sessionToken = token; }); } catch (_e) { /* swallow */ }
         return;
       }
       if (err instanceof ApiError && err.status === 403) {

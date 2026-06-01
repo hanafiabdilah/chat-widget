@@ -6,7 +6,6 @@ import './styles.css';
 
 export { ChatWidget, default } from './ChatWidget.jsx';
 export { templates, ProxybrTemplate, GlobalTemplate } from './templates/index.js';
-export { createMockAdapter } from './core/adapters/mockAdapter.js';
 export { createOmnichannelAdapter } from './core/adapters/omnichannelAdapter.js';
 export { useConversation } from './core/useConversation.js';
 

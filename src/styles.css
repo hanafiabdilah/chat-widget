@@ -1,1 +1,63 @@
 @tailwind utilities;
+
+/*
+ * Scoped reset for elements rendered inside the widget. We can't rely on
+ * Tailwind preflight (it would normalize the host page's elements too,
+ * which is hostile to embedders), so we apply targeted resets only to
+ * children of `.cw-root` — the wrapper each template applies to its
+ * outermost fixed-position elements.
+ *
+ * Without this, native browser styles bleed through on <button> and
+ * <input> (default borders, system fonts, button background, etc.).
+ */
+.cw-root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.cw-root *,
+.cw-root *::before,
+.cw-root *::after {
+  box-sizing: border-box;
+}
+.cw-root button {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+.cw-root button:disabled {
+  cursor: not-allowed;
+}
+.cw-root input,
+.cw-root textarea {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+.cw-root input:focus,
+.cw-root textarea:focus,
+.cw-root button:focus {
+  outline: none;
+}
+.cw-root input::placeholder,
+.cw-root textarea::placeholder {
+  color: inherit;
+  opacity: 0.55;
+}

@@ -1,35 +1,31 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { templates } from './templates/index.js';
-import { createMockAdapter } from './core/adapters/mockAdapter.js';
 import { createOmnichannelAdapter } from './core/adapters/omnichannelAdapter.js';
 import { useConversation } from './core/useConversation.js';
+import { NUVEMCHAT_BASE_URL } from './core/config.js';
 
 // Public React component. Mount it once near the root of the host app:
 //
 //   <ChatWidget
-//     appId="tenant-key"           // → omnichannel adapter (real API)
-//     baseUrl="https://api.nuvemchat.app"
-//     template="proxybr"           // 'proxybr' | 'global' — overridden by
-//                                  //   adapter config when available
+//     appId="550e8400-..."             // Nuvemchat connection identifier
 //     isOpen={open}
 //     onOpen={() => setOpen(true)}
 //     onClose={() => setOpen(false)}
-//     user={user}                  // forwarded as `identify` to the API
-//     theme={theme}                // host theme object (proxybr template only)
-//     brand={{ title, statusLine }}
+//     user={user}                       // forwarded as `identify` to the API
+//     theme={theme}                     // host theme object (proxybr template only)
 //   />
 //
-// Templates are pure presentation; adapters own the conversation transport
-// (mock by default, omnichannel when `appId` + `baseUrl` are provided). For
-// full control, pass a pre-built `adapter` instance to override the default
-// selection.
+// The widget is fully API-driven (see API.md):
+//   - Visitor messages POST to `/widget-api/session/{token}/messages`
+//   - Agent replies arrive via Reverb broadcast on `widget-session.{token}`
+//   - Template + brand (title + accent color) come from `/widget-api/config`
 //
-// `template_type` and `connection.color` returned by the widget config
-// endpoint take precedence over host-provided props — per API.md §11 the
-// connection owner decides UI from the dashboard, not the embedding site.
+// `baseUrl` is baked into the build (see `core/config.js`) — embedders
+// don't pass it. Brand (title, accent) is owned by the connection in the
+// dashboard, not the embedding site (per API.md §11), so there's no prop
+// for it either.
 export const ChatWidget = ({
   appId,
-  baseUrl,
   template = 'proxybr',
   adapter,
   isOpen,
@@ -37,65 +33,83 @@ export const ChatWidget = ({
   onClose,
   user,
   theme,
-  brand,
   debug = false,
 }) => {
-  // Adapter selection precedence:
-  // 1. Explicit `adapter` instance from the host (advanced).
-  // 2. `appId` + `baseUrl` set → omnichannel adapter (real backend).
-  // 3. Fallback → mock adapter so the widget always has something to say.
+  // The host typically passes `user` as an inline object literal, which
+  // creates a fresh reference every render and would otherwise cause the
+  // adapter useMemo to recreate (tearing down and restarting the boot
+  // flow on every parent re-render). Reading the latest value via a ref
+  // keeps `user` out of the dep array while still using current data
+  // when the adapter actually needs it (during `POST /session`).
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  // Adapter selection:
+  //   1. Explicit `adapter` from the host (advanced — useful for tests).
+  //   2. Otherwise build the omnichannel adapter from `appId`. `baseUrl`
+  //      comes from the build-time constant — embedders cannot override.
   const resolvedAdapter = useMemo(() => {
     if (adapter) return adapter;
-    if (appId && baseUrl) {
-      return createOmnichannelAdapter({
-        appId,
-        baseUrl,
-        identify: user ? {
-          name: user.name || user.full_name || user.firstName,
-          email: user.email,
-          meta: user.meta,
-        } : undefined,
-        debug,
-      });
-    }
-    return createMockAdapter({ user });
-  }, [adapter, appId, baseUrl, user, debug]);
+    if (!appId) return null;
+    return createOmnichannelAdapter({
+      appId,
+      baseUrl: NUVEMCHAT_BASE_URL,
+      getIdentify: () => {
+        const u = userRef.current;
+        if (!u) return null;
+        return {
+          name: u.name || u.full_name || u.firstName,
+          email: u.email,
+          meta: u.meta,
+        };
+      },
+      debug,
+    });
+  }, [adapter, appId, debug]);
 
+  // Hook order must stay stable, so all hooks are called unconditionally
+  // and the render-gate checks happen below.
   const conversation = useConversation(resolvedAdapter);
+  const mergedTheme = useMemo(() => {
+    if (!theme) return undefined;
+    const accent = conversation.config?.brand?.accentColor;
+    if (!accent) return theme;
+    return { ...theme, accent };
+  }, [theme, conversation.config]);
 
-  // Fatal-status gate (API.md §9):
-  //   - `inactive` (403): owner disabled the connection → hide widget entirely.
-  //   - `unavailable` (422): invalid app_id → don't render; nothing useful
-  //     to show without a valid config.
-  // A console warning helps embedders notice their `app_id` is wrong without
-  // breaking their page.
-  if (conversation.status === 'inactive' || conversation.status === 'unavailable') {
+  if (!resolvedAdapter) {
+    if (typeof console !== 'undefined') {
+      console.warn('[chat-widget] appId is required — widget not rendered.');
+    }
+    return null;
+  }
+
+  // Only `inactive` (403) hides the widget entirely — per API.md §9 the
+  // owner has explicitly disabled the connection and we must not retry.
+  //
+  // `unavailable` (422, invalid app_id) intentionally keeps the widget
+  // visible: the template renders a "not ready" placeholder so visitors
+  // don't see a broken/empty chat and assume the site is misconfigured.
+  if (conversation.status === 'inactive') {
     if (typeof console !== 'undefined' && conversation.error) {
       console.warn(
-        `[chat-widget] ${conversation.status} — hiding widget.`,
+        '[chat-widget] connection inactive — hiding widget.',
         conversation.error?.body || conversation.error?.message,
       );
     }
     return null;
   }
+  if (conversation.status === 'unavailable' && typeof console !== 'undefined') {
+    console.warn(
+      '[chat-widget] app_id unavailable — rendering not-ready state.',
+      conversation.error?.body || conversation.error?.message,
+    );
+  }
 
-  // Adapter config (e.g. backend `template_type`) wins over host props so
-  // owners can control UI from the dashboard. Falls back to props otherwise.
+  // Adapter config (backend `template_type`) wins over host props so owners
+  // can control UI from the dashboard. Falls back to props otherwise.
   const activeTemplate = conversation.config?.template || template;
   const Template = templates[activeTemplate] || templates.proxybr;
-
-  const mergedBrand = useMemo(() => {
-    if (!conversation.config?.brand) return brand;
-    return { ...(brand || {}), ...conversation.config.brand };
-  }, [brand, conversation.config]);
-
-  // Splice the brand accent color into the host theme so the ProxyBR
-  // template's `t.accent` reflects the connection's brand color when set.
-  const mergedTheme = useMemo(() => {
-    const accent = conversation.config?.brand?.accentColor;
-    if (!theme || !accent) return theme;
-    return { ...theme, accent };
-  }, [theme, conversation.config]);
 
   return (
     <Template
@@ -104,7 +118,6 @@ export const ChatWidget = ({
       onClose={onClose}
       theme={mergedTheme}
       conversation={conversation}
-      brand={mergedBrand}
       user={user}
     />
   );

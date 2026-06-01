@@ -1,11 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Bot, Check, CheckCheck, MessageCircle, Paperclip, Send, Smile, Sparkles, X,
+  Bot, Check, CheckCheck, MessageCircle, Paperclip, Send, Smile, X,
 } from 'lucide-react';
+import { COPYRIGHT } from '../../core/config.js';
 
 // ProxyBR-branded template. Consumes the host project's theme object (`t`)
 // so colors stay consistent with the rest of the dashboard. All chat state
 // is provided by the parent ChatWidget — this file is presentational.
+//
+// `DEFAULT_THEME` makes the template safe to render without a host theme —
+// every leaf component reaches for keys like `t.accent`, `t.bg`, `t.text`,
+// so a missing prop would throw at render time and the widget would never
+// appear. Embedders that don't pass `theme` get this sensible dark fallback.
+const DEFAULT_THEME = {
+  bg: '#0a0a0a',
+  surface: '#171717',
+  surfaceAlt: '#1f1f1f',
+  border: '#262626',
+  borderSubtle: '#1f1f1f',
+  text: '#fafafa',
+  textMuted: '#a3a3a3',
+  textFaint: '#737373',
+  accent: '#c5f825',
+  accentText: '#0a0a0a',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  danger: '#ef4444',
+};
 
 const FloatingButton = ({ onClick, unreadCount, hasNew, t }) => {
   const [hovered, setHovered] = useState(false);
@@ -15,7 +36,7 @@ const FloatingButton = ({ onClick, unreadCount, hasNew, t }) => {
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="fixed z-[45] flex items-center justify-center transition-all"
+      className="cw-root fixed z-[45] flex items-center justify-center transition-all"
       style={{
         bottom: 24, right: 24, width: 56, height: 56, borderRadius: '50%',
         background: t.accent, color: t.accentText,
@@ -154,9 +175,40 @@ const TypingIndicator = ({ agent, t }) => (
   </div>
 );
 
-const Panel = ({
-  t, onClose, conversation, brandTitle = 'ProxyBR · Suporte', statusLine = '3 atendentes online · resposta em ~2min',
-}) => {
+// Placeholder shown when the adapter hasn't reported `status: 'ready'` yet
+// (i.e. still loading config / session, or got a 422 invalid app_id from
+// the backend). Intentionally generic — no error text, no retry button —
+// so a misconfigured embed looks like a chat that's still warming up
+// rather than something broken.
+const NotReadyBody = ({ t }) => (
+  <div className="flex-1 flex flex-col items-center justify-center px-6" style={{ background: t.bg }}>
+    <div className="flex items-center gap-1.5 mb-4" aria-hidden>
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          style={{
+            width: 8, height: 8, borderRadius: '50%', background: t.textMuted,
+            animation: `cw-proxybr-typing 1.4s ease-in-out ${index * 0.2}s infinite`,
+          }}
+        />
+      ))}
+    </div>
+    <div className="font-mono text-[11px] uppercase" style={{ color: t.textFaint, letterSpacing: '0.12em' }}>
+      Preparando atendimento
+    </div>
+  </div>
+);
+
+const Panel = ({ t, onClose, conversation }) => {
+  // Brand title comes from the API config (`connection.name`). Falls back
+  // to the current agent name, then to a generic label when neither is
+  // available yet (e.g. during boot or with an invalid app_id).
+  const brandTitle = conversation.config?.brand?.title;
+  const resolvedTitle = brandTitle || conversation.currentAgent?.name || 'Suporte';
+  // While not ready, never claim "Online" — that would lie about availability.
+  const resolvedStatus = conversation.status !== 'ready'
+    ? 'Conectando…'
+    : (conversation.currentAgent ? `${conversation.currentAgent.name} · online` : 'Online');
   const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply } = conversation;
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -182,10 +234,15 @@ const Panel = ({
   // Quick replies are tied to the first bot message — show them inline
   // right under it (matches the previous SupportChat behaviour).
   const showQuickReplies = quickReplies && quickReplies.length > 0 && messages.length <= 1;
+  // Only render the live chat surface (history + input) once the adapter
+  // says it's ready. Until then (loading, invalid app_id, transient errors)
+  // we show a neutral "warming up" placeholder so the embed never looks
+  // broken from the visitor's point of view.
+  const isReady = conversation.status === 'ready';
 
   return (
     <div
-      className="fixed z-[60] flex flex-col overflow-hidden"
+      className="cw-root fixed z-[60] flex flex-col overflow-hidden"
       style={{
         bottom: 92, right: 24, width: 380, height: 580,
         background: t.bg, border: `1px solid ${t.border}`, borderRadius: 14,
@@ -206,10 +263,10 @@ const Panel = ({
         />
         <Avatar agent={currentAgent || { type: 'bot' }} size={36} t={t} />
         <div className="flex-1 min-w-0 relative">
-          <div className="text-sm font-medium" style={{ color: t.text }}>{brandTitle}</div>
+          <div className="text-sm font-medium" style={{ color: t.text }}>{resolvedTitle}</div>
           <div className="font-mono text-[10px] flex items-center gap-1.5" style={{ color: t.textMuted, letterSpacing: '0.04em' }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: t.success }} />
-            {statusLine}
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: conversation.status === 'ready' ? t.success : t.textFaint }} />
+            {resolvedStatus}
           </div>
         </div>
         <button
@@ -225,67 +282,70 @@ const Panel = ({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 scrollbar-thin" style={{ background: t.bg }}>
-        {messages.map((message) => (
-          <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} />
-        ))}
-        {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} t={t} />}
-        {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} t={t} />}
-        <div ref={messagesEndRef} />
-      </div>
+      {isReady ? (
+        <>
+          <div className="flex-1 overflow-y-auto px-4 py-4 scrollbar-thin" style={{ background: t.bg }}>
+            {messages.map((message) => (
+              <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} />
+            ))}
+            {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} t={t} />}
+            {isTyping && <TypingIndicator agent={currentAgent || { type: 'bot' }} t={t} />}
+            <div ref={messagesEndRef} />
+          </div>
 
-      {messages.length > 1 && (
-        <div
-          className="px-4 py-2 flex items-center gap-2 flex-shrink-0"
-          style={{ background: t.surfaceAlt, borderTop: `1px solid ${t.borderSubtle || t.border}` }}
-        >
-          <Sparkles size={11} style={{ color: t.textFaint }} />
-          <span className="font-mono text-[10px]" style={{ color: t.textFaint, letterSpacing: '0.04em' }}>
-            Conversa criptografada · histórico salvo no painel
-          </span>
-        </div>
+
+          <div
+            className="flex items-end gap-2 px-3 py-3 flex-shrink-0"
+            style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
+          >
+            <button type="button" className="p-2 rounded transition-colors" style={{ color: t.textMuted }} title="Anexar arquivo">
+              <Paperclip size={15} />
+            </button>
+            <div
+              className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{ background: t.bg, border: `1px solid ${t.border}` }}
+            >
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Digite sua mensagem..."
+                className="flex-1 bg-transparent outline-none text-sm"
+                style={{ color: t.text }}
+              />
+              <button type="button" className="p-0.5 rounded transition-colors" style={{ color: t.textMuted }} title="Emoji">
+                <Smile size={14} />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="flex items-center justify-center transition-all flex-shrink-0"
+              style={{
+                width: 36, height: 36, borderRadius: 10,
+                background: input.trim() ? t.accent : t.surfaceAlt,
+                color: input.trim() ? t.accentText : t.textFaint,
+                cursor: input.trim() ? 'pointer' : 'not-allowed',
+                boxShadow: input.trim() ? `0 4px 12px ${t.accent}30` : 'none',
+              }}
+              title="Enviar mensagem"
+            >
+              <Send size={15} />
+            </button>
+          </div>
+        </>
+      ) : (
+        <NotReadyBody t={t} />
       )}
-
       <div
-        className="flex items-end gap-2 px-3 py-3 flex-shrink-0"
-        style={{ background: t.surface, borderTop: `1px solid ${t.border}` }}
+        className="flex items-center justify-center py-1.5 flex-shrink-0"
+        style={{ background: t.surface, borderTop: `1px solid ${t.borderSubtle || t.border}` }}
       >
-        <button type="button" className="p-2 rounded transition-colors" style={{ color: t.textMuted }} title="Anexar arquivo">
-          <Paperclip size={15} />
-        </button>
-        <div
-          className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg"
-          style={{ background: t.bg, border: `1px solid ${t.border}` }}
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Digite sua mensagem..."
-            className="flex-1 bg-transparent outline-none text-sm"
-            style={{ color: t.text }}
-          />
-          <button type="button" className="p-0.5 rounded transition-colors" style={{ color: t.textMuted }} title="Emoji">
-            <Smile size={14} />
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!input.trim()}
-          className="flex items-center justify-center transition-all flex-shrink-0"
-          style={{
-            width: 36, height: 36, borderRadius: 10,
-            background: input.trim() ? t.accent : t.surfaceAlt,
-            color: input.trim() ? t.accentText : t.textFaint,
-            cursor: input.trim() ? 'pointer' : 'not-allowed',
-            boxShadow: input.trim() ? `0 4px 12px ${t.accent}30` : 'none',
-          }}
-          title="Enviar mensagem"
-        >
-          <Send size={15} />
-        </button>
+        <span className="font-mono text-[9px]" style={{ color: t.textFaint, letterSpacing: '0.08em' }}>
+          {COPYRIGHT}
+        </span>
       </div>
     </div>
   );
@@ -293,24 +353,34 @@ const Panel = ({
 
 // Each template owns both its launcher (FAB) and its panel. The orchestrator
 // only flips `isOpen`; everything visual is local to the template.
-export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation, brand }) => (
+export const ProxybrTemplate = ({ isOpen, onOpen, onClose, theme, conversation }) => {
+  // If the host didn't pass a theme, fall back to DEFAULT_THEME so children
+  // (FAB, Panel, MessageBubble, etc.) always receive a complete palette.
+  // Hosts that DO pass `theme` keep full control.
+  const t = theme || DEFAULT_THEME;
+  // Suppress badge + pulse while the adapter isn't ready — showing "2 unread"
+  // on a not-yet-connected widget would be a lie. Once ready, fall back to
+  // the marketing "attention" pattern (pulse ring + small badge).
+  const ready = conversation.status === 'ready';
+  const fabUnread = !ready || isOpen ? 0 : 2;
+  const fabHasNew = ready && !isOpen;
+  return (
   <>
     <style>{`
       @keyframes cw-proxybr-pulse { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.6); opacity: 0; } }
       @keyframes cw-proxybr-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
       @keyframes cw-proxybr-slide-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
     `}</style>
-    <FloatingButton onClick={onOpen} unreadCount={isOpen ? 0 : 2} hasNew={!isOpen} t={theme} />
+    <FloatingButton onClick={onOpen} unreadCount={fabUnread} hasNew={fabHasNew} t={t} />
     {isOpen && (
       <Panel
-        t={theme}
+        t={t}
         onClose={onClose}
         conversation={conversation}
-        brandTitle={brand?.title || 'ProxyBR · Suporte'}
-        statusLine={brand?.statusLine}
       />
     )}
   </>
-);
+  );
+};
 
 export default ProxybrTemplate;
