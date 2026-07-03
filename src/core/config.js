@@ -10,6 +10,6 @@ const BUILD_TIME_OVERRIDE =
     ? import.meta.env.VITE_WIDGET_BASE_URL
     : undefined;
 
-export const NUVEMCHAT_BASE_URL = BUILD_TIME_OVERRIDE || 'https://back-chat.adslogin.com.br';
+export const NUVEMCHAT_BASE_URL = BUILD_TIME_OVERRIDE || 'https://chat.pingly.com.br';
 
 export const COPYRIGHT = 'Powered by MultiChat';

@@ -72,6 +72,7 @@ export const createOmnichannelAdapter = ({
   pageUrl,             // override; defaults to window.location.href
   fetchImpl,
   locale,              // forwarded to message mapper for time formatting
+  virtualAssistantName, // host override for the bot (AI/flow) display name
   debug = false,
 } = {}) => {
   if (!appId) throw new Error('createOmnichannelAdapter: appId is required');
@@ -93,11 +94,11 @@ export const createOmnichannelAdapter = ({
   // lives in one place.
   const emitMessage = (resource) => {
     if (!resource) return;
-    const mapped = mapMessage(resource, { locale });
+    const mapped = mapMessage(resource, { locale, virtualAssistantName });
     handlers.onMessage?.(mapped);
     // Update header agent when an outgoing message arrives (so it tracks
     // whichever agent / bot replied last).
-    const agent = agentFromResource(resource);
+    const agent = agentFromResource(resource, { virtualAssistantName });
     if (agent) handlers.onAgent?.(agent);
   };
 

@@ -32,7 +32,7 @@ const formatTime = (unixSeconds, locale) => {
 
 // Build an Agent object from the MessageResource `sender` block. Returns
 // null for incoming visitor messages (no agent attached).
-export const agentFromResource = (resource) => {
+export const agentFromResource = (resource, { virtualAssistantName } = {}) => {
   if (!resource || resource.sender_type !== 'outgoing') return null;
   const sender = resource.sender || {};
   if (sender.source === 'human' && sender.user) {
@@ -46,11 +46,13 @@ export const agentFromResource = (resource) => {
       initials: initials.toUpperCase() || name.slice(0, 2).toUpperCase(),
     };
   }
-  // ai_flow / static_flow / external — treat as bot.
-  return { type: 'bot', name: 'Atendente Virtual' };
+  // ai_flow / static_flow / external — treat as bot. The bot's display name
+  // is host-overridable via the `virtualAssistantName` prop (empty/omitted
+  // falls back to the default label).
+  return { type: 'bot', name: virtualAssistantName || 'Atendente Virtual' };
 };
 
-export const mapMessage = (resource, { locale } = {}) => {
+export const mapMessage = (resource, { locale, virtualAssistantName } = {}) => {
   if (!resource) return null;
   const isIncoming = resource.sender_type === 'incoming';
   let from = 'client';
@@ -79,7 +81,7 @@ export const mapMessage = (resource, { locale } = {}) => {
     // `meta` for attachments contains `{ filename, mime_type, size }` per
     // API.md §4.6 response. Useful for document download UI.
     attachmentMeta: resource.meta || null,
-    agent: agentFromResource(resource),
+    agent: agentFromResource(resource, { virtualAssistantName }),
     _raw: resource,
   };
 };

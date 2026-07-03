@@ -13,6 +13,7 @@ import { NUVEMCHAT_BASE_URL } from './core/config.js';
 //     onClose={() => setOpen(false)}
 //     user={user}                       // forwarded as `identify` to the API
 //     theme={theme}                     // host theme object (proxybr template only)
+//     virtualAssistantName="Atendente Virtual"  // bot display name override
 //   />
 //
 // The widget is fully API-driven (see API.md):
@@ -37,6 +38,9 @@ export const ChatWidget = ({
   // visitor sends their first message. Each option: { id, label, color?,
   // message? }. See `core/types.js > InitialChatOption`.
   initialChatOptions,
+  // Display name for the bot (AI / flow) in message bubbles and the header.
+  // Defaults to "Atendente Virtual" when empty/omitted.
+  virtualAssistantName,
   debug = false,
 }) => {
   // The host typically passes `user` as an inline object literal, which
@@ -67,9 +71,10 @@ export const ChatWidget = ({
           meta: u.meta,
         };
       },
+      virtualAssistantName,
       debug,
     });
-  }, [adapter, appId, debug]);
+  }, [adapter, appId, virtualAssistantName, debug]);
 
   // Hook order must stay stable, so all hooks are called unconditionally
   // and the render-gate checks happen below.
