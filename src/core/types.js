@@ -17,6 +17,15 @@
  * @property {string} text
  * @property {string} time             Pre-formatted "HH:mm" — templates don't reparse.
  * @property {boolean} [seen]          Only meaningful for `from: 'client'`.
+ * @property {'pending'|'sent'|'failed'} [deliveryStatus]
+ *           Visitor messages only. `pending` = drawn optimistically, still in
+ *           flight; `failed` = the send errored and `retryMessage(id)` will
+ *           re-send it; `sent` = the server has echoed it back. Undefined on
+ *           agent/bot messages, which are only ever rendered once received.
+ * @property {string|number} [replacesId]
+ *           Set by the adapter on a server message that supersedes an
+ *           optimistic one, so the hook swaps it in place rather than
+ *           appending a duplicate. Never present on stored state.
  * @property {number|null} [editedAt]
  * @property {number|null} [unsendAt]  Delete tombstone (Unix seconds).
  * @property {string|null} [attachmentUrl]

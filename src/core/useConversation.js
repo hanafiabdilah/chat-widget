@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { mergeMessage } from './mergeMessage.js';
 
 // Bridges a ChatAdapter to React state. Templates consume the returned
 // object and render whatever shape they like — they don't know whether the
 // underlying transport is mock, WebSocket, polling, or omnichannel.
 //
-// Message handling supports upsert / edit / delete based on `id`:
-//   - new id          → append
-//   - existing id     → replace (handles edits via `editedAt`)
-//   - `unsendAt` set  → remove (server tombstone)
-// This makes it safe for adapters to emit the same message twice (e.g. the
-// omnichannel adapter sees both the REST POST response and the WS broadcast).
+// How a message enters the thread (append / swap / merge / tombstone) lives in
+// `mergeMessage` — it is the part adapters depend on being exactly right, so
+// it is kept pure and out of here.
 export const useConversation = (adapter) => {
   const [messages, setMessages] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -30,6 +28,23 @@ export const useConversation = (adapter) => {
   const adapterRef = useRef(adapter);
   adapterRef.current = adapter;
 
+  // "Agent is typing" is asserted on a timer by the dashboard and withdrawn
+  // when they stop — but the withdrawal is the message most likely to be lost
+  // (tab closed, socket dropped, agent walked away mid-sentence), and an
+  // indicator stuck on forever reads as a broken widget. So it expires here on
+  // its own, and each new assertion pushes the deadline back.
+  const typingTimerRef = useRef(null);
+  const TYPING_TTL_MS = 12000;
+
+  const clearTypingTimer = () => {
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearTypingTimer, []);
+
   useEffect(() => {
     if (!adapter) return undefined;
 
@@ -46,17 +61,26 @@ export const useConversation = (adapter) => {
     setUnreadCount(0);
 
     const cleanup = adapter.start({
-      onMessage: (msg) => setMessages((prev) => {
-        if (msg.unsendAt) return prev.filter((m) => m.id !== msg.id);
-        const index = prev.findIndex((m) => m.id === msg.id);
-        if (index === -1) return [...prev, msg];
-        const next = prev.slice();
-        next[index] = { ...prev[index], ...msg };
-        return next;
-      }),
+      onMessage: (msg) => {
+        // The reply landing IS the end of typing. Said here as well as over the
+        // wire because the two race, and an indicator still spinning underneath
+        // the message it announced looks broken.
+        if (msg.from !== 'client') {
+          clearTypingTimer();
+          setIsTyping(false);
+        }
+
+        setMessages((prev) => mergeMessage(prev, msg));
+      },
       onMessageSeen: (id) => setMessages((prev) =>
         prev.map((m) => (m.id === id ? { ...m, seen: true } : m))),
-      onTyping: setIsTyping,
+      onTyping: (typing) => {
+        clearTypingTimer();
+        setIsTyping(!!typing);
+        if (typing) {
+          typingTimerRef.current = setTimeout(() => setIsTyping(false), TYPING_TTL_MS);
+        }
+      },
       onAgent: setCurrentAgent,
       onQuickReplies: setQuickReplies,
       onConfig: setConfig,
@@ -81,6 +105,8 @@ export const useConversation = (adapter) => {
         setConversationStatus(null);
         setUnreadCount(0);
         setCurrentAgent(null);
+        clearTypingTimer();
+        setIsTyping(false);
       },
     });
     return typeof cleanup === 'function' ? cleanup : undefined;
@@ -90,6 +116,12 @@ export const useConversation = (adapter) => {
   // adapter handles both legacy and attachment-aware call shapes.
   const sendMessage = useCallback((text, opts) => {
     adapterRef.current?.send?.(text, opts);
+  }, []);
+
+  // Re-send a message whose `deliveryStatus` is 'failed'. The adapter still
+  // holds the draft, so nothing has to be passed back in.
+  const retryMessage = useCallback((id) => {
+    adapterRef.current?.retryMessage?.(id);
   }, []);
 
   // Multipart upload — resolves to `{ url, message_type, filename,
@@ -136,6 +168,7 @@ export const useConversation = (adapter) => {
     conversationStatus,
     unreadCount,
     sendMessage,
+    retryMessage,
     selectQuickReply,
     uploadAttachment,
     markSeen,

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  FileText, Loader2, MessageCircle, Paperclip, RotateCcw, Send, Smile, Upload, X,
+  AlertCircle, Clock, FileText, Loader2, MessageCircle, Paperclip, RotateCcw,
+  Send, Smile, Upload, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
 import { EmojiPicker } from '../EmojiPicker.jsx';
@@ -146,10 +147,14 @@ const AttachmentBlock = ({ url, messageType, meta, isClient }) => {
   );
 };
 
-const MessageBubble = ({ msg, agent }) => {
+const MessageBubble = ({ msg, agent, onRetry }) => {
   const isClient = msg.from === 'client';
   const hasAttachment = !!msg.attachmentUrl && msg.messageType && msg.messageType !== 'text';
   const hasCaption = msg.text && msg.text.trim().length > 0;
+  // See the Proxybr template: pending is faded rather than labelled, because
+  // in the normal case it is over before a label finishes being read.
+  const isPending = isClient && msg.deliveryStatus === 'pending';
+  const hasFailed = isClient && msg.deliveryStatus === 'failed';
   return (
     <div className={`flex gap-2 ${isClient ? 'flex-row-reverse' : 'flex-row'}`} style={{ marginBottom: 12 }}>
       {!isClient && <Avatar agent={agent} size={28} />}
@@ -171,6 +176,8 @@ const MessageBubble = ({ msg, agent }) => {
             borderBottomLeftRadius: isClient ? 18 : 6,
             fontSize: 14,
             lineHeight: 1.45,
+            opacity: isPending ? 0.65 : 1,
+            transition: 'opacity 120ms ease-out',
           }}
         >
           {hasAttachment && (
@@ -183,9 +190,22 @@ const MessageBubble = ({ msg, agent }) => {
           )}
           {hasCaption && <div className="whitespace-pre-wrap">{msg.text}</div>}
         </div>
-        <div className="text-[10px] mt-1 px-1" style={{ color: palette.textFaint }}>
-          {msg.time}
-        </div>
+        {hasFailed ? (
+          <button
+            type="button"
+            onClick={() => onRetry?.(msg.id)}
+            className="text-[10px] mt-1 px-1 flex items-center gap-1 hover:underline"
+            style={{ color: palette.danger || '#ef4444' }}
+          >
+            <AlertCircle size={11} />
+            Não enviado · tentar novamente
+          </button>
+        ) : (
+          <div className="text-[10px] mt-1 px-1 flex items-center gap-1" style={{ color: palette.textFaint }}>
+            {msg.time}
+            {isPending && <Clock size={11} />}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -386,7 +406,7 @@ const NotReadyBody = () => (
 const Panel = ({ onClose, conversation, initialChatOptions }) => {
   // Brand title comes from the API config (`connection.name`).
   const brandTitle = conversation.config?.brand?.title;
-  const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply, uploadAttachment } = conversation;
+  const { messages, isTyping, currentAgent, quickReplies, sendMessage, retryMessage, selectQuickReply, uploadAttachment } = conversation;
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -466,6 +486,25 @@ const Panel = ({ onClose, conversation, initialChatOptions }) => {
     if (file) startUpload(file);
   };
 
+  // Paste a screenshot straight into the composer — a screen capture is bytes
+  // on the clipboard, not a file on disk. Bound to the input, not the panel:
+  // a document-level listener in an embedded widget would swallow pastes
+  // meant for the host page.
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      // Chrome also offers a text flavour for a copied image; without this
+      // its filename lands in the input next to the upload.
+      e.preventDefault();
+      startUpload(file);
+      return;
+    }
+  };
+
   const canSendCaption = input.trim().length > 0;
   const canSendAttachment = pending?.status === 'ready';
   const canSend = canSendCaption || canSendAttachment;
@@ -474,7 +513,9 @@ const Panel = ({ onClose, conversation, initialChatOptions }) => {
     if (!canSend) return;
     const caption = input.trim();
     if (canSendAttachment) {
-      sendMessage(caption || '', { attachmentUrl: pending.uploaded.url });
+      // Whole upload payload, not just the URL — the optimistic bubble needs
+      // the message type and filename to draw the image straight away.
+      sendMessage(caption || '', { attachment: pending.uploaded });
       URL.revokeObjectURL(pending.localUrl);
       setPending(null);
       setInput('');
@@ -552,7 +593,7 @@ const Panel = ({ onClose, conversation, initialChatOptions }) => {
         <>
           <div className="flex-1 overflow-y-auto px-5 py-4" style={{ background: palette.bg }}>
             {messages.map((message) => (
-              <MessageBubble key={message.id} msg={message} agent={currentAgent} />
+              <MessageBubble key={message.id} msg={message} agent={currentAgent} onRetry={retryMessage} />
             ))}
             {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} />}
             {showInitialOptions && !isResolved && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} />}
@@ -618,6 +659,7 @@ const Panel = ({ onClose, conversation, initialChatOptions }) => {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                  onPaste={handlePaste}
                   placeholder={pending ? 'Add a caption…' : 'Write a message...'}
                   className="flex-1 bg-transparent outline-none text-sm"
                   style={{ color: palette.text }}

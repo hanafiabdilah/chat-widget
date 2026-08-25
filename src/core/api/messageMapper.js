@@ -18,7 +18,11 @@
 
 const padTwo = (n) => String(n).padStart(2, '0');
 
-const formatTime = (unixSeconds, locale) => {
+// Exported so locally-built messages (the accept greeting, optimistic visitor
+// bubbles) carry the same clock as server ones. They sit next to each other in
+// the thread, and an optimistic bubble reading "14:05" that becomes "2:05 PM"
+// the instant it is acknowledged draws the eye to the wrong thing.
+export const formatTime = (unixSeconds, locale) => {
   if (!unixSeconds) return '';
   const date = new Date(unixSeconds * 1000);
   if (Number.isNaN(date.getTime())) return '';
@@ -71,6 +75,9 @@ export const mapMessage = (resource, { locale, virtualAssistantName } = {}) => {
     text,
     time: formatTime(resource.sent_at || resource.created_at, locale),
     seen: !isIncoming ? undefined : !!resource.read_at,
+    // Anything the server has echoed is, by definition, delivered. Only the
+    // adapter's optimistic bubbles ever carry 'pending' / 'failed'.
+    deliveryStatus: isIncoming ? 'sent' : undefined,
     editedAt: resource.edited_at || null,
     unsendAt: resource.unsend_at || null,
     // Type tag the template uses to pick a renderer (text / image / audio /

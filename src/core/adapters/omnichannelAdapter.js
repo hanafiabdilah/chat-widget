@@ -22,26 +22,41 @@
 import { createRestClient, ApiError } from '../api/restClient.js';
 import { createRealtimeClient } from '../api/realtimeClient.js';
 import { createWidgetStorage } from '../api/storage.js';
-import { mapMessage, agentFromResource } from '../api/messageMapper.js';
+import { mapMessage, agentFromResource, formatTime } from '../api/messageMapper.js';
 
 const WIDGET_EVENT = 'widget-message-received';
 // Status change broadcast (API.md §5.2b). Fires on accept / resolve /
 // other lifecycle transitions. Payload shape:
 //   { conversation_id, old_status, new_status, agent, changed_at }
 const STATUS_EVENT = 'widget-conversation-status-changed';
+// An agent is (or has stopped) writing a reply. Payload:
+//   { conversation_id, typing, agent }
+// Ephemeral by design: nothing is stored, and the hook expires it on its own
+// if the `typing: false` never arrives.
+const TYPING_EVENT = 'widget-typing';
+// An agent opened the thread and read what the visitor wrote. Payload:
+//   { conversation_id, message_ids, read_at }
+// The ids are the visitor's own messages, which is why this only ever turns a
+// tick that is already drawn — nothing here creates or changes a message.
+const READ_EVENT = 'widget-messages-read';
 // Stable client-side id for the synthetic greeting we materialise from
 // `connection.accept_message`. Strings can't collide with server-side
 // numeric MessageResource ids, so the upsert dedupe in useConversation
 // treats it as a distinct row.
 const ACCEPT_MESSAGE_ID = 'accept-message';
 
+// Client-side ids for messages drawn before the server has seen them. Strings
+// can't collide with MessageResource's numeric ids — the same property that
+// makes ACCEPT_MESSAGE_ID safe — so the hook's upsert treats them as their own
+// rows until the real message arrives to replace them.
+let pendingSeq = 0;
+const nextPendingId = () => `pending:${++pendingSeq}`;
+
 const channelName = (token) => `widget-session.${token}`;
 
-const padTwo = (n) => String(n).padStart(2, '0');
-const nowHHMM = () => {
-  const d = new Date();
-  return `${padTwo(d.getHours())}:${padTwo(d.getMinutes())}`;
-};
+// Locally-built messages get their timestamp through the same formatter the
+// mapper uses, so they read identically to the server's.
+const nowFormatted = (locale) => formatTime(Math.floor(Date.now() / 1000), locale);
 
 // Build an Agent object from the API.md §4.3 `conversation.agent` shape.
 // Mirrors `messageMapper.agentFromResource` so the header avatar / name
@@ -92,10 +107,12 @@ export const createOmnichannelAdapter = ({
   // Treat any successful message arrival as the canonical event — both REST
   // responses and WS pushes go through here so the dedupe / upsert logic
   // lives in one place.
-  const emitMessage = (resource) => {
+  // `replacesId` names an optimistic bubble this message supersedes, so the
+  // hook can swap it in place instead of appending a second one.
+  const emitMessage = (resource, { replacesId } = {}) => {
     if (!resource) return;
     const mapped = mapMessage(resource, { locale, virtualAssistantName });
-    handlers.onMessage?.(mapped);
+    handlers.onMessage?.(replacesId ? { ...mapped, replacesId } : mapped);
     // Update header agent when an outgoing message arrives (so it tracks
     // whichever agent / bot replied last).
     const agent = agentFromResource(resource, { virtualAssistantName });
@@ -169,6 +186,32 @@ export const createOmnichannelAdapter = ({
         if (data?.sender_type === 'outgoing') {
           handlers.onUnreadIncrement?.();
         }
+        return;
+      }
+
+      if (normalized === TYPING_EVENT) {
+        log('agent typing', data?.typing);
+        handlers.onTyping?.(!!data?.typing);
+        // The agent's name may arrive here before their first message does,
+        // which is the case where the indicator would otherwise be drawn
+        // against the generic bot avatar. Built through the same helper as
+        // every other path so the initials and role match what the header
+        // already shows.
+        if (data?.typing && data?.agent) {
+          const agent = agentFromSession({ name: data.agent });
+          if (agent) handlers.onAgent?.(agent);
+        }
+        return;
+      }
+
+      if (normalized === READ_EVENT) {
+        // The visitor's own bubbles already carry a tick drawn from `read_at`,
+        // but that value only ever arrived with a fetch — so a visitor sitting
+        // with the panel open watched a single tick until they reloaded. This
+        // is the same fact pushed while they are still looking.
+        const ids = Array.isArray(data?.message_ids) ? data.message_ids : [];
+        log('agent read', ids.length, 'message(s)');
+        ids.forEach((id) => handlers.onMessageSeen?.(id));
         return;
       }
 
@@ -269,7 +312,7 @@ export const createOmnichannelAdapter = ({
       id: ACCEPT_MESSAGE_ID,
       from: 'bot',
       text,
-      time: nowHHMM(),
+      time: nowFormatted(locale),
       agent: { type: 'bot', name: config.connection.name || 'Suporte' },
     });
   };
@@ -373,7 +416,51 @@ export const createOmnichannelAdapter = ({
   // see the token resolved by the async `boot` flow.
   const state = { sessionToken: null, conversationStatus: null };
 
-  const postMessage = async ({ text, attachmentUrl } = {}) => {
+  // Visitor messages that are on screen but not yet acknowledged, keyed by
+  // their client-side id. The composer is cleared the moment the bubble is
+  // drawn, so this is the only remaining copy of what they wrote — it is what
+  // makes a failed send retryable instead of lost.
+  const outbox = new Map();
+
+  // A visitor bubble built from what we know locally, before the server has
+  // seen it. Deliberately the same shape mapMessage() produces, so templates
+  // render it through the existing path and only `deliveryStatus` tells the
+  // two apart.
+  const optimisticMessage = (id, { text, attachment, time }, deliveryStatus) => ({
+    id,
+    from: 'client',
+    text: text || '',
+    // Stamped once when the draft was made, not on each redraw: a send that
+    // takes half a minute to fail would otherwise have its bubble jump to a
+    // later time at the moment it is marked failed.
+    time,
+    seen: false,
+    editedAt: null,
+    unsendAt: null,
+    // The upload already happened, so an attached image can be drawn from its
+    // real URL — the visitor sees the picture, not a placeholder.
+    messageType: attachment?.message_type || 'text',
+    attachmentUrl: attachment?.url || null,
+    attachmentMeta: attachment
+      ? { filename: attachment.filename, mime_type: attachment.mime_type, size: attachment.size }
+      : null,
+    agent: null,
+    deliveryStatus,
+  });
+
+  /**
+   * Send a visitor message, drawing it immediately.
+   *
+   * The bubble appears before the request leaves, then moves to `sent` (server
+   * echo swaps in) or `failed` (retryable). Waiting for the round trip first
+   * meant that on a slow connection the visitor watched an empty thread after
+   * pressing send, and pressed it again.
+   *
+   * `resendOf` reuses an existing bubble's id instead of drawing a new one —
+   * used by retryMessage() and by the one automatic retry after a dead
+   * session is rebuilt. `recovered` stops that retry from recursing.
+   */
+  const postMessage = async ({ text, attachment, resendOf, recovered = false } = {}) => {
     if (!state.sessionToken) {
       log('send called before session ready — dropping');
       return;
@@ -386,26 +473,48 @@ export const createOmnichannelAdapter = ({
       return;
     }
     // Backend requires at least one of message or attachment_url.
-    if ((!text || !text.trim()) && !attachmentUrl) return;
+    const body = text ? text.trim() : '';
+    if (!body && !attachment?.url) return;
+
+    const id = resendOf || nextPendingId();
+    const draft = { text: body, attachment: attachment || null, time: nowFormatted(locale) };
+    outbox.set(id, draft);
+    handlers.onMessage?.(optimisticMessage(id, draft, 'pending'));
+
     try {
-      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: text, attachmentUrl });
+      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: body, attachmentUrl: attachment?.url });
       const result = await api.sendMessage(state.sessionToken, {
-        message: text ? text.trim() : undefined,
-        attachmentUrl,
+        message: body || undefined,
+        attachmentUrl: attachment?.url,
       });
       log('message sent', result?.message?.id);
+      outbox.delete(id);
       // The server-echoed message is authoritative — render from this rather
-      // than what the user typed. (Realtime channel will also broadcast it,
-      // but the id dedupe in templates' upsert logic handles that.)
-      if (result?.message) emitMessage(result.message);
+      // than what the user typed. It carries `replacesId` so the optimistic
+      // row is swapped in place; appending and then removing would flash a
+      // duplicate and move the message to the bottom of the thread.
+      if (result?.message) {
+        emitMessage(result.message, { replacesId: id });
+      } else {
+        // Accepted with no echo. Nothing to reconcile against, but the bubble
+        // must stop looking unsent.
+        handlers.onMessage?.(optimisticMessage(id, draft, 'sent'));
+      }
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        // Session vanished mid-conversation. Reset and re-bootstrap quietly.
+      if (err instanceof ApiError && err.status === 404 && !recovered) {
+        // Session vanished mid-conversation. Rebuild it and send once more —
+        // the visitor never asked for a new session and should not have to
+        // retype a message to find out they got one.
         log('send 404 → re-bootstrapping');
         storage.clearSessionToken();
         state.sessionToken = null;
-        try { await bootstrapSession().then(({ token }) => { state.sessionToken = token; }); } catch (_e) { /* swallow */ }
-        return;
+        try {
+          const { token } = await bootstrapSession();
+          state.sessionToken = token;
+        } catch (_e) { /* fall through to the failed marker below */ }
+        if (state.sessionToken && !stopped) {
+          return postMessage({ text: body, attachment, resendOf: id, recovered: true });
+        }
       }
       if (err instanceof ApiError && err.status === 403) {
         // Connection was disabled while the visitor was chatting. Tear down
@@ -414,8 +523,22 @@ export const createOmnichannelAdapter = ({
         handlers.onStatus?.('inactive', err);
       }
       log('send failed', err);
+      // The draft stays in the outbox: the bubble now offers a retry, and this
+      // is what that retry sends.
+      handlers.onMessage?.(optimisticMessage(id, draft, 'failed'));
       handlers.onError?.(err);
     }
+    return undefined;
+  };
+
+  // Re-send a bubble the visitor tapped "try again" on. Unknown ids are
+  // ignored — the draft is dropped as soon as a send succeeds, so a double
+  // tap on an already-recovered message does nothing.
+  const retryMessage = (id) => {
+    const draft = outbox.get(id);
+    if (!draft) return;
+    log('retrying', id);
+    postMessage({ ...draft, resendOf: id });
   };
 
   // Multipart upload (API.md §4.5). Resolves to the upload payload
@@ -461,6 +584,10 @@ export const createOmnichannelAdapter = ({
     storage.clearSessionToken();
     state.sessionToken = null;
     state.conversationStatus = null;
+    // Drafts belong to the conversation being discarded; their bubbles are
+    // about to be cleared, and retrying one into a fresh session would post a
+    // message the visitor thinks they abandoned.
+    outbox.clear();
     // Tear down the existing realtime subscription — the new session has
     // a different token and therefore a different channel.
     if (unsubscribeChannel) { try { unsubscribeChannel(); } catch (_e) {} unsubscribeChannel = null; }
@@ -493,13 +620,21 @@ export const createOmnichannelAdapter = ({
     // `{ text, attachmentUrl }` when sending an attachment with optional
     // caption. The two-arg variant exists for ergonomic callers that
     // already prepared an attachment via `uploadAttachment`.
+    //
+    // Pass the whole upload payload as `attachment` (what uploadAttachment
+    // resolved to) rather than just `attachmentUrl` when you can: the extra
+    // fields are what let the optimistic bubble draw the image and its
+    // filename instead of an empty box. `attachmentUrl` alone still works.
     send(textOrOpts, opts) {
-      if (typeof textOrOpts === 'string' || textOrOpts == null) {
-        postMessage({ text: textOrOpts || '', attachmentUrl: opts?.attachmentUrl });
-      } else {
-        postMessage({ text: textOrOpts.text || '', attachmentUrl: textOrOpts.attachmentUrl });
-      }
+      const source = (typeof textOrOpts === 'string' || textOrOpts == null)
+        ? { text: textOrOpts || '', ...(opts || {}) }
+        : textOrOpts;
+      const attachment = source.attachment
+        || (source.attachmentUrl ? { url: source.attachmentUrl } : null);
+      postMessage({ text: source.text || '', attachment });
     },
+
+    retryMessage,
 
     selectQuickReply(reply) {
       if (!reply?.label) return;
