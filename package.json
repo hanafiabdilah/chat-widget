@@ -1,6 +1,6 @@
 {
   "name": "@multichat-adslogin/chat-widget",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Embeddable React chat widget for the Nuvemchat / MultiChat Live Chat API. Single component, drag-and-drop attachments, realtime via Laravel Reverb, dynamic initial chat options.",
   "keywords": [
