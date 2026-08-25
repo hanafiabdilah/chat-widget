@@ -104,7 +104,8 @@ import { ChatWidget } from '@multichat-adslogin/chat-widget';
 
 // The conversation object exposes:
 //   .messages, .conversationStatus, .unreadCount, .currentAgent
-//   .sendMessage(text, { attachmentUrl? })
+//   .sendMessage(text, { attachment? | attachmentUrl? })
+//   .retryMessage(id) — re-send a message whose deliveryStatus is 'failed'
 //   .uploadAttachment(file) → { url, message_type, ... }
 //   .markSeen()
 //   .refreshStatus()
@@ -113,6 +114,40 @@ import { ChatWidget } from '@multichat-adslogin/chat-widget';
 
 A future release will expose this via an imperative ref. For now, the
 widget owns the conversation hook internally.
+
+### Optimistic sending
+
+`sendMessage` draws the bubble before the request leaves, so the thread never
+sits empty while a round trip the visitor cannot see decides whether their
+message existed. Each visitor message carries a `deliveryStatus`:
+
+| Value | Meaning | Rendered as |
+|---|---|---|
+| `pending` | Drawn locally, request in flight | Faded bubble, clock icon |
+| `sent` | Server echoed it back | Normal bubble, delivery tick |
+| `failed` | Send errored; the draft is still held | "Não enviado · tentar novamente" — tapping calls `retryMessage(id)` |
+
+Until it is acknowledged the bubble carries a client-side string id
+(`pending:1`); the server's echo replaces it **in place**, so a reply that
+arrived while it was in flight does not get reordered.
+
+A send that fails with `404` (session expired server-side) rebuilds the session
+and retries once on its own — the visitor never asked for a new session and
+should not have to retype a message to discover they got one.
+
+Pass the whole upload payload as `attachment` rather than just `attachmentUrl`
+when you have it: the extra fields (`message_type`, `filename`) are what let
+the optimistic bubble draw the image immediately instead of an empty frame.
+`attachmentUrl` on its own still works.
+
+### Pasting images
+
+Both templates accept an image pasted into the composer (`Ctrl`/`Cmd`+`V`) and
+stage it exactly like a dropped or picked file — a screen capture lives on the
+clipboard as bytes, not as a file on disk, so without this the visitor has to
+save it somewhere just to attach it. The paste handler is bound to the input,
+not the document: a global listener inside an embedded widget would swallow
+pastes meant for the host page. Any text already typed stays as the caption.
 
 ---
 

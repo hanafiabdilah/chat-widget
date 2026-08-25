@@ -473,6 +473,31 @@ SDK harus react sesuai transisi:
 - Diamkan saja (visitor bisa lihat history) → user klik "Mulai chat baru" → SDK panggil `localStorage.clear()` + `POST /session/{appId}` lagi
 - Atau auto-reset setelah N detik / saat user kirim pesan baru
 
+### 5.2c Event: `widget-messages-read`
+
+Agent membuka thread dan membaca pesan visitor.
+
+|            |                          |
+| ---------- | ------------------------ |
+| Event name | `widget-messages-read`   |
+| Payload    | objek di bawah           |
+
+```json
+{
+  "conversation_id": 123,
+  "message_ids": [4501, 4502],
+  "read_at": "2026-08-18T10:31:00+00:00"
+}
+```
+
+`message_ids` selalu pesan **milik visitor sendiri** (`sender_type: incoming`), jadi event
+ini tidak pernah membuat atau mengubah pesan — ia hanya menyalakan centang kedua yang
+sudah digambar dari `read_at` pada `MessageResource`. Tanpa event ini centangnya baru
+berubah saat visitor reload, karena `read_at` hanya ikut di response fetch.
+
+SDK: set `seen: true` pada pesan yang id-nya disebut (lihat `onMessageSeen` di
+`useConversation`).
+
 ### 5.3 Reverb connection config
 
 SDK **tidak perlu hardcode** credential broadcasting — seluruh field tersedia di block `realtime` dari response `GET /widget-api/config/{appId}` (lihat §4.1).

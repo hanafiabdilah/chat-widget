@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Bot, Check, CheckCheck, FileText, Loader2, MessageCircle, Paperclip,
-  RotateCcw, Send, Smile, Upload, X,
+  AlertCircle, Bot, Check, CheckCheck, Clock, FileText, Loader2, MessageCircle,
+  Paperclip, RotateCcw, Send, Smile, Upload, X,
 } from 'lucide-react';
 import { COPYRIGHT } from '../../core/config.js';
 import { EmojiPicker } from '../EmojiPicker.jsx';
@@ -187,11 +187,16 @@ const AttachmentBlock = ({ url, messageType, meta, t, isClient }) => {
   );
 };
 
-const MessageBubble = ({ msg, agentForMessage, t }) => {
+const MessageBubble = ({ msg, agentForMessage, t, onRetry }) => {
   const isClient = msg.from === 'client';
   const agent = isClient ? null : agentForMessage;
   const hasAttachment = !!msg.attachmentUrl && msg.messageType && msg.messageType !== 'text';
   const hasCaption = msg.text && msg.text.trim().length > 0;
+  // Drawn before the server has confirmed it. Faded rather than annotated:
+  // the state lasts a few hundred milliseconds in the normal case, and a
+  // label that flickers past is noise.
+  const isPending = isClient && msg.deliveryStatus === 'pending';
+  const hasFailed = isClient && msg.deliveryStatus === 'failed';
   return (
     <div className={`flex gap-2 ${isClient ? 'flex-row-reverse' : 'flex-row'}`} style={{ marginBottom: 14 }}>
       {!isClient && <Avatar agent={agent} size={28} t={t} />}
@@ -212,6 +217,8 @@ const MessageBubble = ({ msg, agentForMessage, t }) => {
             border: isClient ? 'none' : `1px solid ${t.borderSubtle || t.border}`,
             borderTopRightRadius: isClient ? 4 : 8,
             borderTopLeftRadius: isClient ? 8 : 4,
+            opacity: isPending ? 0.65 : 1,
+            transition: 'opacity 120ms ease-out',
           }}
         >
           {hasAttachment && (
@@ -227,10 +234,26 @@ const MessageBubble = ({ msg, agentForMessage, t }) => {
             <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.text}</div>
           )}
         </div>
-        <div className="font-mono text-[10px] mt-1 px-1 flex items-center gap-1" style={{ color: t.textFaint }}>
-          {msg.time}
-          {isClient && (msg.seen ? <CheckCheck size={11} style={{ color: t.accent }} /> : <Check size={11} />)}
-        </div>
+        {hasFailed ? (
+          <button
+            type="button"
+            onClick={() => onRetry?.(msg.id)}
+            className="font-mono text-[10px] mt-1 px-1 flex items-center gap-1 hover:underline"
+            style={{ color: t.danger || '#ef4444' }}
+          >
+            <AlertCircle size={11} />
+            Não enviado · tentar novamente
+          </button>
+        ) : (
+          <div className="font-mono text-[10px] mt-1 px-1 flex items-center gap-1" style={{ color: t.textFaint }}>
+            {msg.time}
+            {isClient && (
+              isPending
+                ? <Clock size={11} />
+                : msg.seen ? <CheckCheck size={11} style={{ color: t.accent }} /> : <Check size={11} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -454,7 +477,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
   const resolvedStatus = conversation.status !== 'ready'
     ? 'Conectando…'
     : (conversation.currentAgent ? `${conversation.currentAgent.name} · online` : 'Online');
-  const { messages, isTyping, currentAgent, quickReplies, sendMessage, selectQuickReply, uploadAttachment } = conversation;
+  const { messages, isTyping, currentAgent, quickReplies, sendMessage, retryMessage, selectQuickReply, uploadAttachment } = conversation;
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -553,6 +576,28 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
     if (file) startUpload(file);
   };
 
+  // Paste a screenshot straight into the composer. A screen capture lives on
+  // the clipboard as bytes, not as a file on disk, so without this the visitor
+  // has to save it somewhere just to attach it — and describing an error in
+  // words is exactly what they were trying to avoid.
+  //
+  // Bound to the input rather than the panel: a document-level listener in an
+  // embedded widget would swallow pastes meant for the host page.
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      // Chrome also puts a text flavour on the clipboard for a copied image;
+      // without this its filename lands in the input alongside the upload.
+      e.preventDefault();
+      startUpload(file);
+      return;
+    }
+  };
+
   const canSendCaption = input.trim().length > 0;
   const canSendAttachment = pending?.status === 'ready';
   const canSend = canSendCaption || canSendAttachment;
@@ -561,7 +606,10 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
     if (!canSend) return;
     const caption = input.trim();
     if (canSendAttachment) {
-      sendMessage(caption || '', { attachmentUrl: pending.uploaded.url });
+      // Whole upload payload, not just the URL: it carries the message type
+      // and filename the optimistic bubble needs to draw the image straight
+      // away instead of an empty frame.
+      sendMessage(caption || '', { attachment: pending.uploaded });
       URL.revokeObjectURL(pending.localUrl);
       setPending(null);
       setInput('');
@@ -663,7 +711,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
         <>
           <div className="flex-1 overflow-y-auto px-4 py-4 scrollbar-thin" style={{ background: t.bg }}>
             {messages.map((message) => (
-              <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} />
+              <MessageBubble key={message.id} msg={message} agentForMessage={currentAgent} t={t} onRetry={retryMessage} />
             ))}
             {showQuickReplies && <QuickRepliesRow options={quickReplies} onSelect={selectQuickReply} t={t} />}
             {showInitialOptions && !isResolved && <InitialOptionsRow options={initialChatOptions} onSelect={handleSelectOption} t={t} />}
@@ -731,6 +779,7 @@ const Panel = ({ t, onClose, conversation, initialChatOptions }) => {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
                   placeholder={pending ? 'Adicione uma legenda…' : 'Digite sua mensagem...'}
                   className="flex-1 bg-transparent outline-none text-sm"
                   style={{ color: t.text }}
