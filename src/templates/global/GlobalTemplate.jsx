@@ -42,7 +42,7 @@ const FloatingButton = ({ onClick, unreadCount }) => {
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="cw-root fixed z-[45] flex items-center justify-center transition-all"
+      className="cw-root cw-launcher fixed z-[45] flex items-center justify-center transition-all"
       style={{
         bottom: 24, right: 24, width: 56, height: 56, borderRadius: '50%',
         background: palette.accent, color: palette.accentText,
@@ -544,7 +544,7 @@ const Panel = ({ onClose, conversation, initialChatOptions }) => {
 
   return (
     <div
-      className="cw-root fixed z-[60] flex flex-col overflow-hidden"
+      className="cw-root cw-panel fixed z-[60] flex flex-col overflow-hidden"
       style={{
         bottom: 92, right: 24, width: 380, height: 580,
         background: palette.bg, border: `1px solid ${palette.border}`,

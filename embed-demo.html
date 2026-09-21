@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Embed demo — a site that is hostile on purpose</title>
+  <style>
+    /*
+     * Not a neutral page. Every rule here has broken an embedded widget
+     * somewhere before, and they are the reason the embed mounts into a
+     * shadow root with `all: initial` on the host:
+     *
+     *   - 62.5% root font-size (the old "1rem = 10px" trick): rem resolves
+     *     against <html>, which shadow DOM does NOT isolate — so the widget
+     *     ships px instead (see vite.embed.config.js).
+     *   - a sticky bar at z-index 999999: the panel has to sit above it.
+     *   - blanket !important styling on every <button> and a serif body font.
+     *
+     * If the widget still looks right here, it will look right anywhere.
+     */
+    html { font-size: 62.5%; }
+    body { margin: 0; font: 1.6rem/1.6 Georgia, serif; color: #0f172a; background: #f8fafc; }
+    header { position: sticky; top: 0; z-index: 999999; background: #111827; color: #fff; padding: 1.6rem 2.4rem; }
+    button { background: crimson !important; color: #fff; border: 3px dashed #000; padding: 1.6rem 2.4rem; text-transform: uppercase; }
+    main { padding: 4rem 2.4rem; max-width: 72rem; }
+    code { background: #e2e8f0; padding: 0.2rem 0.6rem; }
+  </style>
+</head>
+<body>
+  <header>Sticky header · z-index 999999</header>
+  <main>
+    <h1>Loja Aurora</h1>
+    <p>
+      Build first: <code>npm run build:embed</code>, then <code>npm run dev</code>
+      and open <code>/embed-demo.html</code>.
+    </p>
+    <p>Any element with <code>data-pingly-chat</code> opens the widget:</p>
+    <p><button data-pingly-chat="open">Fale conosco</button></p>
+  </main>
+
+  <!-- What a customer pastes. `data-api-url` is only here because this page
+       is served from Vite and not from the platform; in production the widget
+       talks to whoever served widget.js. -->
+  <script
+    src="/dist-embed/widget.js"
+    data-app-id="REPLACE_WITH_A_REAL_APP_ID"
+    data-api-url="https://chat.pingly.com.br"
+    data-debug="true"
+    async
+  ></script>
+</body>
+</html>

@@ -47,7 +47,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "build:embed": "node scripts/build-embed.mjs",
+    "publish:embed": "node scripts/publish-embed.mjs",
+    "release:embed": "npm run build:embed && npm run publish:embed"
   },
   "publishConfig": {
     "access": "public"

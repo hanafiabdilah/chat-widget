@@ -88,6 +88,19 @@ export const createOmnichannelAdapter = ({
   fetchImpl,
   locale,              // forwarded to message mapper for time formatting
   virtualAssistantName, // host override for the bot (AI/flow) display name
+  // Don't create the conversation until the visitor actually writes.
+  //
+  // `POST /session` is what brings a Contact + Conversation row into being,
+  // and boot calls it on the first page view — so with the widget embedded on
+  // a public site every visitor who never says a word still lands in the
+  // database (one production workspace collected 4.591 of them). With this on,
+  // boot only *restores* a session the browser already has; a brand new
+  // visitor gets one the moment they send their first message, which is also
+  // the first moment anyone on the other side could see them.
+  //
+  // Off by default: hosts that already ship the npm package keep the exact
+  // boot they have. The embed turns it on.
+  deferSession = false,
   debug = false,
 } = {}) => {
   if (!appId) throw new Error('createOmnichannelAdapter: appId is required');
@@ -320,13 +333,17 @@ export const createOmnichannelAdapter = ({
   // Returns { token, historyCount, fresh }. `fresh=true` means we just
   // created the session (no existing token), so `getSession` after this
   // is just for unread/agent — there's no resolved-state to worry about.
-  const bootstrapSession = async () => {
+  const bootstrapSession = async ({ createIfMissing = true } = {}) => {
     const existing = storage.getSessionToken();
     if (existing) {
       const { ok, count } = await loadHistory(existing);
       if (ok) return { token: existing, historyCount: count, fresh: false };
       // history said the token was bad — fall through and create a new one.
     }
+
+    // Deferred boot: nothing stored yet, and the visitor hasn't asked for a
+    // conversation. Return empty-handed; `ensureSession()` creates it later.
+    if (!createIfMissing) return { token: null, historyCount: 0, fresh: false };
 
     const identifyData = typeof getIdentify === 'function' ? getIdentify() : identify;
     const payload = {
@@ -370,9 +387,13 @@ export const createOmnichannelAdapter = ({
     if (stopped) return;
     emitConfig(config);
 
+    // Kept for `ensureSession()`, which may only run minutes later — when the
+    // visitor finally writes — long after `config` has gone out of scope.
+    state.realtimeConfig = config.realtime;
+
     let session;
     try {
-      session = await bootstrapSession();
+      session = await bootstrapSession({ createIfMissing: !deferSession });
       log('session ready', { token: session.token, historyCount: session.historyCount, fresh: session.fresh });
     } catch (err) {
       log('session failed', err.status, err.body || err.message);
@@ -388,18 +409,20 @@ export const createOmnichannelAdapter = ({
     if (session.historyCount === 0) emitAcceptMessage(config);
 
     // Stash for outbound calls. Captured via closure to avoid stale refs.
+    // Null while deferred — the visitor has no conversation yet.
     state.sessionToken = session.token;
 
     // Fetch session status (unread, agent, conversation.status). Skipping
     // this on a freshly created session is a small optimisation — a new
     // session is always { status: 'pending', unread: 0, agent: null } so
     // we save one round trip during the typical first-visit flow.
-    if (!session.fresh) {
+    if (session.token && !session.fresh) {
       const statusResult = await loadSessionStatus(session.token);
       if (stopped) return;
       if (!statusResult.ok) {
-        // Token rejected by /session — rebuild from scratch.
-        const fresh = await bootstrapSession();
+        // Token rejected by /session — rebuild from scratch. Under deferral
+        // that rebuild waits for the visitor, same as a first visit would.
+        const fresh = await bootstrapSession({ createIfMissing: !deferSession });
         if (stopped) return;
         if (fresh.historyCount === 0) emitAcceptMessage(config);
         state.sessionToken = fresh.token;
@@ -407,14 +430,45 @@ export const createOmnichannelAdapter = ({
       }
     }
 
-    openRealtime(config.realtime, session.token);
+    // No token yet (deferred, first visit): there is no channel to listen on.
+    // `ensureSession()` opens it the moment the session is created.
+    if (state.sessionToken) openRealtime(config.realtime, state.sessionToken);
     handlers.onStatus?.('ready');
-    log('ready');
+    log('ready', state.sessionToken ? '' : '(session deferred)');
+  };
+
+  /**
+   * Resolve a session token, creating the session if this is the visitor's
+   * first word. Concurrent callers share one in-flight POST — two quick sends
+   * must not open two conversations.
+   */
+  const ensureSession = async () => {
+    if (state.sessionToken) return state.sessionToken;
+    if (!state.sessionPromise) {
+      state.sessionPromise = (async () => {
+        const created = await bootstrapSession({ createIfMissing: true });
+        if (stopped || !created.token) return null;
+        state.sessionToken = created.token;
+        openRealtime(state.realtimeConfig, created.token);
+        log('session created on demand', created.token);
+        return created.token;
+      })();
+      // Clearing it either way is what makes a failed creation retryable:
+      // the next send tries again instead of awaiting a rejected promise.
+      state.sessionPromise.catch(() => {}).then(() => { state.sessionPromise = null; });
+    }
+    return state.sessionPromise;
   };
 
   // Mutable shared state — exposed only inside this factory so `send` can
   // see the token resolved by the async `boot` flow.
-  const state = { sessionToken: null, conversationStatus: null };
+  const state = {
+    sessionToken: null,
+    conversationStatus: null,
+    // Set at boot, read by `ensureSession()` when the session is created late.
+    realtimeConfig: null,
+    sessionPromise: null,
+  };
 
   // Visitor messages that are on screen but not yet acknowledged, keyed by
   // their client-side id. The composer is cleared the moment the bubble is
@@ -461,7 +515,11 @@ export const createOmnichannelAdapter = ({
    * session is rebuilt. `recovered` stops that retry from recursing.
    */
   const postMessage = async ({ text, attachment, resendOf, recovered = false } = {}) => {
-    if (!state.sessionToken) {
+    // Without deferral a missing token means boot hasn't finished (or failed),
+    // and there is nothing to wait for — drop it, as before. With deferral a
+    // missing token is the normal first-message case: the bubble is drawn
+    // first and the session is created below, inside the try.
+    if (!state.sessionToken && !deferSession) {
       log('send called before session ready — dropping');
       return;
     }
@@ -482,8 +540,13 @@ export const createOmnichannelAdapter = ({
     handlers.onMessage?.(optimisticMessage(id, draft, 'pending'));
 
     try {
-      log('POST message', `${baseUrl}/widget-api/session/${state.sessionToken}/messages`, { message: body, attachmentUrl: attachment?.url });
-      const result = await api.sendMessage(state.sessionToken, {
+      // First message of a deferred session: this is where the conversation
+      // is actually born. The bubble is already on screen, so the extra round
+      // trip costs the visitor nothing visible.
+      const token = state.sessionToken || await ensureSession();
+      if (!token) throw new Error('could not start a session');
+      log('POST message', `${baseUrl}/widget-api/session/${token}/messages`, { message: body, attachmentUrl: attachment?.url });
+      const result = await api.sendMessage(token, {
         message: body || undefined,
         attachmentUrl: attachment?.url,
       });
@@ -548,6 +611,10 @@ export const createOmnichannelAdapter = ({
   // optimistic preview the moment the upload completes, then attach a
   // caption before the visitor actually sends.
   const uploadAttachment = async (file) => {
+    // Uploads are addressed to the session (the token is in the path), so a
+    // deferred session has to exist before the file can go anywhere. Attaching
+    // a file is the visitor speaking, same as typing.
+    if (!state.sessionToken && deferSession) await ensureSession();
     if (!state.sessionToken) {
       throw new Error('upload called before session ready');
     }

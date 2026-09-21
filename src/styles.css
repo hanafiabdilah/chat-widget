@@ -22,7 +22,15 @@
 :where(.cw-root, .cw-root *, .cw-root *::before, .cw-root *::after) {
   box-sizing: border-box;
 }
-:where(.cw-root) button {
+/*
+ * `button.cw-root` is listed alongside the descendant selector because the
+ * launcher IS the root element, not something inside it. Without it the
+ * button keeps the browser's own `2px outset` border — invisible on a page
+ * with a CSS reset, plainly visible inside the embed's shadow root, where no
+ * reset from the page can reach.
+ */
+:where(.cw-root) button,
+:where(button.cw-root) {
   border: 0;
   margin: 0;
   padding: 0;
@@ -36,7 +44,8 @@
   -moz-appearance: none;
   appearance: none;
 }
-:where(.cw-root) button:disabled {
+:where(.cw-root) button:disabled,
+:where(button.cw-root):disabled {
   cursor: not-allowed;
 }
 :where(.cw-root) input,
@@ -61,4 +70,36 @@
 :where(.cw-root) textarea::placeholder {
   color: inherit;
   opacity: 0.55;
+}
+
+/*
+ * Viewport fits. The panel is sized for a desktop corner — 380×580, anchored
+ * 24px from the right and 92px from the bottom — and two viewports it never
+ * asked about break that. Both belong to the visitor, not to the embedding
+ * site, so neither can be fixed by configuration:
+ *
+ *   - a phone is narrower than the panel, so its left edge falls off-screen;
+ *   - a short window (phone in landscape, a half-height laptop browser) is
+ *     shorter than 580 + 92, so the header is pushed past the top.
+ *
+ * The height cap is unconditional: on a tall screen 580px is already under
+ * it and nothing changes. The full-screen switch is a phone breakpoint.
+ *
+ * `!important` here is not decoration. Those sizes are inline styles on the
+ * element (the templates compute them in JS), and no selector reaches an
+ * inline style without it.
+ */
+.cw-panel {
+  max-height: calc(100vh - 116px) !important;
+  max-height: calc(100dvh - 116px) !important;
+}
+@media (max-width: 480px) {
+  .cw-panel {
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    border-radius: 0 !important;
+    border-width: 0 !important;
+  }
 }

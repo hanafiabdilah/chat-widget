@@ -84,6 +84,94 @@ visitor message. The chips disappear after the visitor sends anything.
 
 ---
 
+## Embed build (no npm, no React)
+
+Most sites that want a chat widget have no build step at all, so there is a
+second distribution: one script tag, served by the platform.
+
+```html
+<script src="https://chat.pingly.com.br/widget.js" data-app-id="YOUR_APP_ID" async></script>
+```
+
+That is the whole installation. The same components, the same adapter — the
+difference is that this build mounts itself:
+
+- into a **shadow root** on a host element wiped with `all: initial`, so the
+  page's CSS cannot reach the widget and the widget cannot reach the page;
+- with **React bundled** (nothing is expected of the host) and Tailwind's
+  `rem` values compiled to `px`, because `rem` resolves against the page's
+  `<html>` and shadow DOM does not isolate that — a site with
+  `html { font-size: 62.5% }` would otherwise shrink the whole widget;
+- with `deferSession: true`, so a visitor who never writes never becomes a
+  conversation row.
+
+### Settings
+
+`data-app-id` is the only required one. Anything more goes in an object
+declared **before** the script tag:
+
+```html
+<script>
+  window.pinglyChatSettings = {
+    appId: "YOUR_APP_ID",
+    user: { name: "Maria", email: "maria@example.com" },  // arrives with the conversation
+    open: true,            // start with the panel open
+    zIndex: 2147483000,    // against a very insistent sticky header
+    apiUrl: "https://…",   // default: the origin that served widget.js
+    locale: "pt-BR",
+    debug: true,
+  };
+</script>
+<script src="https://chat.pingly.com.br/widget.js" async></script>
+```
+
+Also accepted on the tag: `data-api-url`, `data-template`, `data-z-index`,
+`data-locale`, `data-open="true"`, `data-debug="true"`, and `?id=APP_ID` on the
+script URL for page builders that strip unknown attributes.
+
+### Opening it from the site
+
+Any element with `data-pingly-chat` opens (or closes, or toggles) the widget —
+no JavaScript on the site's side:
+
+```html
+<button data-pingly-chat="open">Talk to us</button>
+<button data-pingly-chat="toggle">Chat</button>
+```
+
+Or imperatively, through `window.PinglyChat`:
+
+| Call | What it does |
+|---|---|
+| `.open()` / `.close()` / `.toggle()` | Panel state. |
+| `.isOpen()` | `true` while the panel is open. |
+| `.identify({ name, email, meta })` | Visitor details; they reach the dashboard with the first message. |
+| `.on('ready' \| 'open' \| 'close', fn)` | Returns an unsubscribe function. |
+| `.destroy()` | Unmounts and removes the widget. |
+
+Calls made while the bundle is still loading are queued by the loader and
+replayed — a visitor clicking the site's own button one second after page load
+is not ignored. The same three events are also dispatched on `window` as
+`pingly-chat:ready`, `pingly-chat:open`, `pingly-chat:close`.
+
+### Building and publishing it
+
+```bash
+npm run build:embed     # dist-embed/widget.js + dist-embed/widget/pingly-chat.<hash>.js
+npm run publish:embed   # copies both into ../nuvemchat-be-2/public
+npm run release:embed   # both of the above
+```
+
+The loader is tiny and short-lived; the bundle is content-hashed and cached
+forever. The platform serves them from `/widget.js` and `/widget/*` — see
+`nuvemchat-be-2/docs/chat-widget-embed.md` for the deploy order and the Caddy
+block they need.
+
+Local check: `npm run build:embed && npm run dev`, then open
+`/embed-demo.html` — a page built to be hostile on purpose.
+
+---
+
 ## Backend configuration
 
 The widget API base URL is **baked in at build time** (defaults to a hardcoded URL in `src/core/config.js`). Override via `VITE_WIDGET_BASE_URL` when building from source:
