@@ -41,6 +41,12 @@ export const ChatWidget = ({
   // Display name for the bot (AI / flow) in message bubbles and the header.
   // Defaults to "Atendente Virtual" when empty/omitted.
   virtualAssistantName,
+  // Wait for the visitor's first message before creating the conversation.
+  // Off by default so existing hosts keep the boot they have; worth turning on
+  // for a widget on a public page, where `POST /session` at load time files
+  // every passing visitor as a conversation nobody will read. Ignored when the
+  // host passes its own `adapter` — that adapter decides for itself.
+  deferSession = false,
   debug = false,
 }) => {
   // The host typically passes `user` as an inline object literal, which
@@ -72,9 +78,10 @@ export const ChatWidget = ({
         };
       },
       virtualAssistantName,
+      deferSession,
       debug,
     });
-  }, [adapter, appId, virtualAssistantName, debug]);
+  }, [adapter, appId, virtualAssistantName, deferSession, debug]);
 
   // Hook order must stay stable, so all hooks are called unconditionally
   // and the render-gate checks happen below.

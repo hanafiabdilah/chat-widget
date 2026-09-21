@@ -48,6 +48,7 @@ brand color, accept message, realtime credentials — from
 | `theme`               | `Theme`                                       |          | Color overrides for the ProxyBR template (dark). The Global template has its own light palette. |
 | `template`            | `'proxybr' \| 'global'`                       |          | Initial template hint. Backend `template_type` always wins once config loads. |
 | `initialChatOptions`  | `Array<{ id, label, color?, message? }>`      |          | Quick-reply chips shown until the visitor sends their first message. |
+| `deferSession`        | `boolean`                                     |          | Wait for the visitor's first message before creating the conversation. Default `false`. |
 | `debug`               | `boolean`                                     |          | Enables verbose lifecycle logging in the console. |
 
 ### `initialChatOptions` example
