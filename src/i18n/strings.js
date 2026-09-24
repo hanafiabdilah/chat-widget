@@ -6,8 +6,11 @@
  * enviado". That was survivable while the template was three sentences; the
  * home screen is mostly words, so they are collected here instead.
  *
- * `locale` picks a dictionary, a host may override any individual line, and
- * an unknown locale falls back to pt-BR rather than to a missing-key crash:
+ * Four dictionaries, because the site that sells this product ships in four
+ * languages and a widget speaking a fifth on one of them is worse than no
+ * widget at all. `locale` picks one, a host may override any individual
+ * line, and an unknown locale falls back to pt-BR rather than to a
+ * missing-key crash:
  * the platform's first market is Brazil and a widget that renders the wrong
  * language still works, while one that renders `undefined` does not.
  */
@@ -115,6 +118,54 @@ const en = {
   timeWeek: 'w',
 };
 
+const es = {
+  greetingTitle: 'Hola 👋',
+  greetingSubtitle: '¿En qué podemos ayudarte?',
+  recentMessage: 'Mensaje reciente',
+  sendMessage: 'Envíanos un mensaje',
+  sendMessageHint: 'Normalmente respondemos en pocos minutos',
+  you: 'Tú',
+
+  writeMessage: 'Escribe un mensaje…',
+  addCaption: 'Añade un comentario…',
+  online: 'En línea',
+  connecting: 'Conectando…',
+  settingUp: 'Preparando tu chat',
+  typing: 'escribiendo…',
+
+  statusPending: 'En espera',
+  statusActive: 'En curso',
+  statusResolved: 'Resuelto',
+  conversationEnded: 'Esta conversación ha terminado',
+  startNewConversation: 'Iniciar una conversación nueva',
+
+  notSent: 'No enviado · reintentar',
+  attachFile: 'Adjuntar archivo',
+  emoji: 'Emoji',
+  send: 'Enviar',
+  cancelAttachment: 'Cancelar adjunto',
+  dropFile: 'Suelta el archivo aquí',
+  uploading: 'Subiendo…',
+  attachmentReady: 'listo',
+  uploadFailed: 'Error al subir — cancela e inténtalo de nuevo',
+
+  photo: 'Foto',
+  video: 'Vídeo',
+  audio: 'Audio',
+  file: 'Archivo',
+
+  openChat: 'Abrir el chat de soporte',
+  closeChat: 'Cerrar el chat',
+  back: 'Volver',
+  unreadMessages: 'mensajes sin leer',
+
+  timeNow: 'ahora',
+  timeMinute: 'min',
+  timeHour: 'h',
+  timeDay: 'd',
+  timeWeek: 'sem',
+};
+
 const id = {
   greetingTitle: 'Halo 👋',
   greetingSubtitle: 'Ada yang bisa kami bantu?',
@@ -163,7 +214,7 @@ const id = {
   timeWeek: 'mgg',
 };
 
-export const DICTIONARIES = { 'pt-br': ptBR, pt: ptBR, en, id, in: id };
+export const DICTIONARIES = { 'pt-br': ptBR, pt: ptBR, en, es, id, in: id };
 
 export const DEFAULT_LOCALE = 'pt-BR';
 

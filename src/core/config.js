@@ -12,4 +12,7 @@ const BUILD_TIME_OVERRIDE =
 
 export const NUVEMCHAT_BASE_URL = BUILD_TIME_OVERRIDE || 'https://chat.pingly.com.br';
 
-export const COPYRIGHT = 'Powered by MultiChat';
+// The platform's current name. It reads in the widget footer on every site
+// that embeds it — including pingly.com.br itself, which was selling Pingly
+// under a footer crediting the product's previous name.
+export const COPYRIGHT = 'Powered by Pingly';

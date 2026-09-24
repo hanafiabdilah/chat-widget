@@ -53,7 +53,7 @@ brand color, accept message, realtime credentials — from
 | `greeting`            | `{ title?, subtitle? }`                       |          | Overrides the home screen's greeting. |
 | `agents`              | `Array<{ name, avatarUrl?, color? }>`         |          | Faces in the home hero. |
 | `logoUrl`             | `string`                                      |          | Square mark in the hero. Falls back to the workspace's initial. |
-| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `id`. Also sets the clock format. |
+| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `es`, `id`. Also sets the clock format. |
 | `strings`             | `Partial<Strings>`                            |          | Overrides for individual lines — see `src/i18n/strings.js`. |
 | `theme`               | `Theme`                                       |          | Colour overrides for the **proxybr** template only. |
 | `template`            | `'proxybr' \| 'global'`                       |          | Initial template hint. Backend `template_type` always wins once config loads. |
@@ -132,7 +132,7 @@ declared **before** the script tag:
     open: true,            // start with the panel open
     zIndex: 2147483000,    // against a very insistent sticky header
     apiUrl: "https://…",   // default: the origin that served widget.js
-    locale: "pt-BR",       // pt-BR | en | id
+    locale: "pt-BR",       // pt-BR | en | es | id
 
     // Appearance. Both are optional: the colour comes from the workspace and
     // the scheme from your page.

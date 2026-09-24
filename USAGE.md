@@ -108,7 +108,7 @@ the widget.
 | `greeting`            | `{ title?, subtitle? }`                       |          | Overrides the home screen's greeting. |
 | `agents`              | `Array<{ name, avatarUrl?, color? }>`         |          | Faces in the home hero. Strings are accepted too. |
 | `logoUrl`             | `string`                                      |          | Square mark in the hero. Falls back to the workspace's initial. |
-| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `id`. Also sets the clock format on bubbles. |
+| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `es`, `id`. Also sets the clock format on bubbles. |
 | `strings`             | `Partial<Strings>`                            |          | Overrides for individual lines — keys in `src/i18n/strings.js`. |
 | `theme`               | `Theme`                                       |          | Colour overrides for the **proxybr** template only. |
 | `template`            | `'proxybr' \| 'global'`                       |          | Initial template hint. The dashboard setting takes over once loaded. |
@@ -220,7 +220,7 @@ the site's own theme toggle takes the widget with them. Pin it with
 
 ### Language
 
-`locale` picks one of the built-in dictionaries (`pt-BR`, `en`, `id`) and the
+`locale` picks one of the built-in dictionaries (`pt-BR`, `en`, `es`, `id`) and the
 clock format on message bubbles. Individual lines can be replaced without
 forking a dictionary:
 
