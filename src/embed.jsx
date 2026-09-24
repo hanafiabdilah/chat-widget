@@ -185,6 +185,20 @@ const EmbeddedWidget = ({ settings, adapter, controller, onIdentify, onDestroy }
       isOpen={isOpen}
       onOpen={() => setIsOpen(true)}
       onClose={() => setIsOpen(false)}
+      // Appearance. `accent` is left undefined unless the site set it, so the
+      // workspace's dashboard colour stays the default — the site overriding
+      // its own supplier's brand should be a thing it asked for.
+      accent={settings.accent}
+      appearance={settings.appearance || 'auto'}
+      colors={settings.colors}
+      locale={settings.locale}
+      strings={settings.strings}
+      // Home screen. `home: false` opens straight into the composer, which is
+      // how the widget behaved before this screen existed.
+      home={settings.home !== false}
+      greeting={settings.greeting}
+      agents={settings.agents}
+      logoUrl={settings.logoUrl}
       debug={!!settings.debug}
     />
   );

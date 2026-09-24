@@ -101,7 +101,16 @@ the widget.
 | `onOpen`              | `() => void`                                  |          | Called when the panel opens. |
 | `onClose`             | `() => void`                                  |          | Called when the panel closes. |
 | `user`                | `{ name?, email?, meta? }`                    |          | Identifies the visitor to the support agent. |
-| `theme`               | `Theme`                                       |          | Color overrides for the **proxybr** template (dark). The **global** template has its own light palette. |
+| `accent`              | `string`                                      |          | Brand colour. Defaults to the workspace's `connection.color`. Any hex or `rgb()`. |
+| `appearance`          | `'auto' \| 'light' \| 'dark'`                  |          | `auto` (default) follows the host page. |
+| `colors`              | `Partial<Palette>` or `{ light, dark }`       |          | Overrides for individual palette keys. |
+| `home`                | `boolean`                                     |          | Home screen before the composer. Default `true`. |
+| `greeting`            | `{ title?, subtitle? }`                       |          | Overrides the home screen's greeting. |
+| `agents`              | `Array<{ name, avatarUrl?, color? }>`         |          | Faces in the home hero. Strings are accepted too. |
+| `logoUrl`             | `string`                                      |          | Square mark in the hero. Falls back to the workspace's initial. |
+| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `id`. Also sets the clock format on bubbles. |
+| `strings`             | `Partial<Strings>`                            |          | Overrides for individual lines — keys in `src/i18n/strings.js`. |
+| `theme`               | `Theme`                                       |          | Colour overrides for the **proxybr** template only. |
 | `template`            | `'proxybr' \| 'global'`                       |          | Initial template hint. The dashboard setting takes over once loaded. |
 | `initialChatOptions`  | `Array<{ id, label, color?, message? }>`      |          | Quick-reply chips shown until the visitor sends their first message. |
 | `debug`               | `boolean`                                     |          | Enables verbose lifecycle logging in the console. |
@@ -148,29 +157,83 @@ message to reach the agent.
 
 ---
 
-## 7. Templates & theming
+## 7. Appearance
 
-Two templates are available:
+### The home screen
 
-- **`proxybr`** — dark appearance, colors can be overridden via the `theme` prop.
-- **`global`** — light appearance with a fixed palette.
-
-The template is ultimately decided by your dashboard setting, which **always
-wins** over the `template` prop. The `template` prop is only an initial hint
-before the configuration loads.
-
-Example theme override (only applies to the proxybr template):
+The panel opens on a greeting, the conversation waiting to be picked up, and
+one button that starts a new one. There is no tab bar: the only other place to
+be is the conversation itself, and the card describing it is what opens it —
+the chat header carries a back arrow to return.
 
 ```jsx
 <ChatWidget
   appId="..."
-  template="proxybr"
-  theme={{ accent: '#7c3aed' /* ...other color overrides... */ }}
+  greeting={{ title: 'Olá 👋', subtitle: 'Como podemos ajudar?' }}
+  agents={[
+    { name: 'Ana Souza', avatarUrl: 'https://…/ana.jpg' },
+    { name: 'Bruno Lima' },
+  ]}
+  logoUrl="https://…/logo.png"
 />
 ```
 
-> If a brand accent color is set in the dashboard, it overrides the
-> `theme.accent` you provide.
+`agents` are the faces in the hero. With none supplied the widget shows
+whoever is currently replying, and with nobody to show it draws nothing —
+a row of grey placeholders would promise people who are not there.
+
+`home={false}` opens straight into the composer, which is how the widget
+behaved before this screen existed.
+
+### Colour
+
+One value drives the whole palette. It comes from the connection in the
+dashboard, so a workspace repaints its widget everywhere at once; `accent`
+overrides it for a host that would rather match its own product.
+
+```jsx
+<ChatWidget appId="..." accent="#7c3aed" />
+```
+
+Everything else is derived and measured before it is used. The label on a
+filled surface is whichever of black or white reads better on it, so a pale
+yellow brand gets dark buttons rather than white-on-yellow; the accent used as
+*ink* — links, icons, a chip's border — is nudged until it clears a reading
+threshold against the panel, so a near-black brand stays visible on a dark
+one. Individual keys can still be overridden:
+
+```jsx
+<ChatWidget
+  appId="..."
+  colors={{ dark: { bg: '#000000', surface: '#0d0d0d' } }}
+/>
+```
+
+### Dark mode
+
+`appearance` defaults to `auto`, which reads the host page rather than
+assuming: `data-theme` (and `data-mode`, `data-bs-theme`, …), a `dark` or
+`light` class on `<html>` or `<body>`, the CSS `color-scheme` property, and
+finally `prefers-color-scheme`. All of them are watched, so a visitor using
+the site's own theme toggle takes the widget with them. Pin it with
+`appearance="light"` or `appearance="dark"`.
+
+### Language
+
+`locale` picks one of the built-in dictionaries (`pt-BR`, `en`, `id`) and the
+clock format on message bubbles. Individual lines can be replaced without
+forking a dictionary:
+
+```jsx
+<ChatWidget appId="..." locale="id" strings={{ sendMessage: 'Hubungi kami' }} />
+```
+
+### Templates
+
+The template is ultimately decided by your dashboard setting, which **always
+wins** over the `template` prop — that prop is only a hint for the moment
+before the configuration loads. `global` is the brand-neutral one described
+above; `proxybr` is ProxyBR's own chrome and keeps its `theme` prop.
 
 ---
 
@@ -190,7 +253,9 @@ Once mounted, the widget automatically handles:
   instead of a broken UI.
 - **Self-contained styles** — the widget's CSS is scoped and won't affect your
   page's styles.
-- **Lightweight** — ~19 KB gzipped, with no extra runtime dependencies beyond the
+- **Reduced motion** — panel and view animations are dropped for visitors whose
+  system asks for it.
+- **Lightweight** — ~22 KB gzipped, with no extra runtime dependencies beyond the
   peer dependencies.
 
 ---

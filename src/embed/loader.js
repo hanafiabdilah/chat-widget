@@ -70,8 +70,14 @@
     if (data.template) settings.template = data.template;
     if (data.zIndex) settings.zIndex = data.zIndex;
     if (data.locale) settings.locale = data.locale;
+    if (data.accent) settings.accent = data.accent;
+    if (data.appearance) settings.appearance = data.appearance;
+    if (data.logoUrl) settings.logoUrl = data.logoUrl;
     if (data.open === 'true') settings.open = true;
     if (data.debug === 'true') settings.debug = true;
+    // Only the negative is read. The home screen is the default, so an
+    // attribute is how a site turns it off — never how it turns it on.
+    if (data.home === 'false') settings.home = false;
   }
   // `?id=` on the script URL, for page builders that strip unknown attributes.
   if (query && query.get('id')) settings.appId = query.get('id');

@@ -74,6 +74,10 @@ export const mapMessage = (resource, { locale, virtualAssistantName } = {}) => {
     from,
     text,
     time: formatTime(resource.sent_at || resource.created_at, locale),
+    // The same instant unformatted. `time` is a wall clock for the bubble;
+    // the home screen needs an age ("2d") and cannot recover one from a
+    // string that has already been localised down to hours and minutes.
+    sentAt: resource.sent_at || resource.created_at || null,
     seen: !isIncoming ? undefined : !!resource.read_at,
     // Anything the server has echoed is, by definition, delivered. Only the
     // adapter's optimistic bubbles ever carry 'pending' / 'failed'.

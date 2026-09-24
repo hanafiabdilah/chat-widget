@@ -43,7 +43,10 @@ const READ_EVENT = 'widget-messages-read';
 // `connection.accept_message`. Strings can't collide with server-side
 // numeric MessageResource ids, so the upsert dedupe in useConversation
 // treats it as a distinct row.
-const ACCEPT_MESSAGE_ID = 'accept-message';
+// Exported because it is the one bubble in the thread that nobody sent: the
+// widget writes it locally from the dashboard's accept message. Anything
+// asking "has this visitor got a conversation?" has to be able to discount it.
+export const ACCEPT_MESSAGE_ID = 'accept-message';
 
 // Client-side ids for messages drawn before the server has seen them. Strings
 // can't collide with MessageResource's numeric ids — the same property that
@@ -57,6 +60,7 @@ const channelName = (token) => `widget-session.${token}`;
 // Locally-built messages get their timestamp through the same formatter the
 // mapper uses, so they read identically to the server's.
 const nowFormatted = (locale) => formatTime(Math.floor(Date.now() / 1000), locale);
+const nowUnix = () => Math.floor(Date.now() / 1000);
 
 // Build an Agent object from the API.md §4.3 `conversation.agent` shape.
 // Mirrors `messageMapper.agentFromResource` so the header avatar / name
@@ -326,6 +330,7 @@ export const createOmnichannelAdapter = ({
       from: 'bot',
       text,
       time: nowFormatted(locale),
+      sentAt: nowUnix(),
       agent: { type: 'bot', name: config.connection.name || 'Suporte' },
     });
   };
@@ -480,7 +485,7 @@ export const createOmnichannelAdapter = ({
   // seen it. Deliberately the same shape mapMessage() produces, so templates
   // render it through the existing path and only `deliveryStatus` tells the
   // two apart.
-  const optimisticMessage = (id, { text, attachment, time }, deliveryStatus) => ({
+  const optimisticMessage = (id, { text, attachment, time, sentAt }, deliveryStatus) => ({
     id,
     from: 'client',
     text: text || '',
@@ -488,6 +493,7 @@ export const createOmnichannelAdapter = ({
     // takes half a minute to fail would otherwise have its bubble jump to a
     // later time at the moment it is marked failed.
     time,
+    sentAt,
     seen: false,
     editedAt: null,
     unsendAt: null,
@@ -535,7 +541,7 @@ export const createOmnichannelAdapter = ({
     if (!body && !attachment?.url) return;
 
     const id = resendOf || nextPendingId();
-    const draft = { text: body, attachment: attachment || null, time: nowFormatted(locale) };
+    const draft = { text: body, attachment: attachment || null, time: nowFormatted(locale), sentAt: nowUnix() };
     outbox.set(id, draft);
     handlers.onMessage?.(optimisticMessage(id, draft, 'pending'));
 

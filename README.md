@@ -1,8 +1,9 @@
 # @multichat-adslogin/chat-widget
 
 Embeddable React chat widget for the MultiChat / Nuvemchat Live Chat API.
-One component, drag-and-drop attachments, realtime via Laravel Reverb,
-configurable initial chat options, and a built-in emoji picker.
+One component, a home screen, drag-and-drop attachments, realtime via Laravel
+Reverb, and a built-in emoji picker. Takes its colour from the workspace and
+follows the host site into dark mode.
 
 ```bash
 npm install @multichat-adslogin/chat-widget lucide-react
@@ -45,7 +46,16 @@ brand color, accept message, realtime credentials — from
 | `isOpen`              | `boolean`                                     |          | Controlled open state. |
 | `onOpen` / `onClose`  | `() => void`                                  |          | Open/close callbacks. |
 | `user`                | `{ name?, email?, meta? }`                    |          | Forwarded as `identify` data when the session is created. |
-| `theme`               | `Theme`                                       |          | Color overrides for the ProxyBR template (dark). The Global template has its own light palette. |
+| `accent`              | `string`                                      |          | Brand colour. Defaults to the workspace's `connection.color`. |
+| `appearance`          | `'auto' \| 'light' \| 'dark'`                  |          | `auto` (default) follows the host page. |
+| `colors`              | `Partial<Palette>` or `{ light, dark }`       |          | Overrides for individual palette keys. |
+| `home`                | `boolean`                                     |          | Home screen before the composer. Default `true`. |
+| `greeting`            | `{ title?, subtitle? }`                       |          | Overrides the home screen's greeting. |
+| `agents`              | `Array<{ name, avatarUrl?, color? }>`         |          | Faces in the home hero. |
+| `logoUrl`             | `string`                                      |          | Square mark in the hero. Falls back to the workspace's initial. |
+| `locale`              | `string`                                      |          | `pt-BR` (default), `en`, `id`. Also sets the clock format. |
+| `strings`             | `Partial<Strings>`                            |          | Overrides for individual lines — see `src/i18n/strings.js`. |
+| `theme`               | `Theme`                                       |          | Colour overrides for the **proxybr** template only. |
 | `template`            | `'proxybr' \| 'global'`                       |          | Initial template hint. Backend `template_type` always wins once config loads. |
 | `initialChatOptions`  | `Array<{ id, label, color?, message? }>`      |          | Quick-reply chips shown until the visitor sends their first message. |
 | `deferSession`        | `boolean`                                     |          | Wait for the visitor's first message before creating the conversation. Default `false`. |
@@ -72,7 +82,10 @@ visitor message. The chips disappear after the visitor sends anything.
 ## Features
 
 - **Single component** — drop in, no provider setup, no manual wiring.
-- **Dual templates** — `proxybr` (dark, themable) and `global` (light, fixed palette). Backend picks via `template_type`.
+- **Home screen** — a greeting, the conversation waiting to be picked up, and one button to start a new one. No tab bar: the only other place to be is the conversation, and the card that describes it is what opens it.
+- **One accent, whole theme** — the workspace's brand colour produces the launcher, the hero, the bubbles and the links, each measured for contrast against the surface it lands on. Pale brands get dark ink, dark brands get light ink, and a brand the colour of the panel still has a visible launcher.
+- **Dark mode that follows the site** — `data-theme`, a `dark` class, the CSS `color-scheme` property, then the OS preference. Re-read whenever the page changes its mind, so a visitor flipping the site's own theme switch takes the widget with them.
+- **Dual templates** — `proxybr` (dark, themable) and `global` (brand-neutral, light and dark). Backend picks via `template_type`.
 - **REST + Realtime** — `GET /config`, `POST /session`, `POST /messages`, `GET /messages`, `GET /session` (status), `POST /seen`, plus WebSocket subscription to `widget-session.{token}` for agent replies and conversation status changes.
 - **Attachments** — drag-and-drop OR file picker. Pre-uploads via `POST /uploads`, shows preview with caption input, renders inline in bubbles (image/audio/video/document with download).
 - **Initial chat options** — dynamic chips configured via props, each click sends a message.
@@ -119,7 +132,20 @@ declared **before** the script tag:
     open: true,            // start with the panel open
     zIndex: 2147483000,    // against a very insistent sticky header
     apiUrl: "https://…",   // default: the origin that served widget.js
-    locale: "pt-BR",
+    locale: "pt-BR",       // pt-BR | en | id
+
+    // Appearance. Both are optional: the colour comes from the workspace and
+    // the scheme from your page.
+    accent: "#7c3aed",     // overrides the dashboard's colour for this site
+    appearance: "auto",    // auto | light | dark
+    colors: { dark: { bg: "#000000" } },
+
+    // Home screen
+    home: true,            // false opens straight into the composer
+    greeting: { title: "Olá 👋", subtitle: "Como podemos ajudar?" },
+    agents: [{ name: "Ana Souza", avatarUrl: "https://…/ana.jpg" }],
+    logoUrl: "https://…/logo.png",
+
     debug: true,
   };
 </script>
@@ -127,8 +153,29 @@ declared **before** the script tag:
 ```
 
 Also accepted on the tag: `data-api-url`, `data-template`, `data-z-index`,
-`data-locale`, `data-open="true"`, `data-debug="true"`, and `?id=APP_ID` on the
-script URL for page builders that strip unknown attributes.
+`data-locale`, `data-accent`, `data-appearance`, `data-logo-url`,
+`data-home="false"`, `data-open="true"`, `data-debug="true"`, and `?id=APP_ID`
+on the script URL for page builders that strip unknown attributes.
+
+### Colour and dark mode
+
+The accent comes from the connection in the dashboard, so a workspace changes
+its widget everywhere at once without anybody editing a snippet. `accent` on
+the embedding site overrides it, for a host that would rather match its own
+product than its supplier's.
+
+Everything else is derived from that one value and measured before it is used:
+the label on a filled surface is whichever of black or white reads better on
+it, and the accent-as-ink (links, icons, the thin border on a chip) is nudged
+until it clears a real reading threshold against the panel. A workspace whose
+brand is near-black gets a launcher that is still visible on a dark page.
+
+The colour scheme is read from the host page rather than assumed, in this
+order: `data-theme` (and `data-mode`, `data-bs-theme`, …), a `dark` or `light`
+class on `<html>` or `<body>`, the CSS `color-scheme` property, and finally
+`prefers-color-scheme`. All of them are watched, so a visitor using the site's
+own theme toggle sees the widget follow. Pin it with
+`appearance: "light" | "dark"` if the site would rather it did not.
 
 ### Opening it from the site
 
@@ -170,6 +217,28 @@ block they need.
 
 Local check: `npm run build:embed && npm run dev`, then open
 `/embed-demo.html` — a page built to be hostile on purpose.
+
+---
+
+## Looking at it locally
+
+`npm run dev` serves two harnesses on `:5174`:
+
+| Page | What it is for |
+| ---- | -------------- |
+| `/preview.html` | The widget driven by a fake adapter. No backend, no app id, no conversation to be in the middle of — which is what makes the states worth checking reachable: dark mode, a brand colour nobody has chosen yet, the home screen of a first-time visitor. |
+| `/` | `playground.jsx`, talking to the real API. Needs `VITE_WIDGET_APP_ID` in `.env.local`. |
+| `/embed-demo.html` | The embed build on a page that is hostile on purpose (62.5% root font-size, a sticky header at z-index 999999, blanket `!important` on every button). Run `npm run build:embed` first. |
+
+The preview takes query parameters, so a state can be linked to rather than
+described:
+
+```
+/preview.html?scheme=dark&accent=%2316a34a&history=0&locale=id
+```
+
+`scheme` is `light`, `dark` or `auto` — `auto` plus the page's own theme
+button is how the host-page-following behaviour is checked.
 
 ---
 

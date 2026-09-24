@@ -73,14 +73,14 @@
 }
 
 /*
- * Viewport fits. The panel is sized for a desktop corner — 380×580, anchored
+ * Viewport fits. The panel is sized for a desktop corner — 400×640, anchored
  * 24px from the right and 92px from the bottom — and two viewports it never
  * asked about break that. Both belong to the visitor, not to the embedding
  * site, so neither can be fixed by configuration:
  *
  *   - a phone is narrower than the panel, so its left edge falls off-screen;
  *   - a short window (phone in landscape, a half-height laptop browser) is
- *     shorter than 580 + 92, so the header is pushed past the top.
+ *     shorter than 640 + 92, so the header is pushed past the top.
  *
  * The height cap is unconditional: on a tall screen 580px is already under
  * it and nothing changes. The full-screen switch is a phone breakpoint.
@@ -101,5 +101,39 @@
     max-height: none !important;
     border-radius: 0 !important;
     border-width: 0 !important;
+  }
+}
+
+/*
+ * Full-screen on a phone means the launcher would sit on top of the panel it
+ * opened — a floating button over a conversation, with nothing left for it to
+ * do that the header's close button does not already do.
+ */
+@media (max-width: 480px) {
+  .cw-launcher[data-open="true"] {
+    display: none !important;
+  }
+}
+
+/*
+ * Firefox is the only engine that needs telling. Chrome and Safari take their
+ * scrollbar colours from the `color-scheme` the panel sets inline, which is
+ * also why no thumb colour is named here: a hard-coded one would be right in
+ * exactly one of the two themes.
+ */
+.cw-scroll {
+  scrollbar-width: thin;
+}
+
+/*
+ * The panel animates in, and a visitor who has asked their system not to
+ * animate things has asked about this too.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :where(.cw-root) *,
+  :where(.cw-root) {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
