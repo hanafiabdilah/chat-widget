@@ -65,7 +65,32 @@ const THREAD = [
   },
 ];
 
+/*
+ * Three conversations, so the home list has something to be a list of. The
+ * real adapter assembles these from one `GET /session/{token}` per remembered
+ * token; here they are literals.
+ */
+const CONVERSATIONS = [
+  {
+    token: 'tok-active', id: 31, status, unreadCount: unread,
+    agent: { type: 'human', name: 'Ana Souza' },
+    lastMessage: { from: 'bot', text: 'Bom dia! Já localizei o pedido aqui — saiu para entrega hoje.', messageType: 'text', sentAt: now - 7400 },
+  },
+  {
+    token: 'tok-old-1', id: 22, status: 'resolved', unreadCount: 0,
+    agent: { type: 'human', name: 'Bruno Lima' },
+    lastMessage: { from: 'client', text: 'Perfeito, obrigado pela ajuda!', messageType: 'text', sentAt: now - 260000 },
+  },
+  {
+    token: 'tok-old-2', id: 14, status: 'resolved', unreadCount: 0,
+    agent: null,
+    lastMessage: { from: 'bot', text: 'Sua nota fiscal foi emitida.', messageType: 'document', sentAt: now - 1400000 },
+  },
+];
+
 const makeAdapter = () => ({
+  listConversations: () => Promise.resolve(withHistory ? CONVERSATIONS : []),
+  openConversation: () => Promise.resolve(),
   start(handlers) {
     handlers.onConfig?.({
       template: 'global',

@@ -161,10 +161,24 @@ message to reach the agent.
 
 ### The home screen
 
-The panel opens on a greeting, the conversation waiting to be picked up, and
-one button that starts a new one. There is no tab bar: the only other place to
-be is the conversation itself, and the card describing it is what opens it —
-the chat header carries a back arrow to return.
+The panel opens on a greeting, the visitor's recent conversations, and one
+button that starts a new one. There is no tab bar: the only other place to be
+is a conversation, and the row describing it is what opens it — the chat
+header carries a back arrow to return.
+
+The list includes conversations that are already **resolved**, which is the
+point of it: a visitor coming back to check what they were told has somewhere
+to look. Tapping one reopens it; a resolved conversation is readable and shows
+"start a new conversation" where the composer would be, because the backend
+will not accept a message into it.
+
+⚠️ **The list is what this browser remembers.** The widget API is addressed by
+session token and has no endpoint that lists a visitor's conversations, so the
+widget keeps the tokens (in `localStorage`, five at most) and reads one
+`GET /session/{token}` per row when the home screen opens. Clearing site data
+loses the list — not the conversations, which the workspace still has, but the
+visitor's way back to them. Nothing is fetched for a visitor who never opens
+the panel.
 
 ```jsx
 <ChatWidget

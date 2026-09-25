@@ -279,6 +279,7 @@ export const createOmnichannelAdapter = ({
         // to bootstrap fresh.
         log('history 404 → resetting session');
         storage.clearSessionToken();
+        storage.forgetSessionToken(sessionToken);
         return { ok: false, count: 0 };
       }
       log('history failed', err);
@@ -342,7 +343,12 @@ export const createOmnichannelAdapter = ({
     const existing = storage.getSessionToken();
     if (existing) {
       const { ok, count } = await loadHistory(existing);
-      if (ok) return { token: existing, historyCount: count, fresh: false };
+      if (ok) {
+        // Also into the archive. Tokens from before this existed are only
+        // ever seen here, so this is where they get picked up.
+        storage.rememberSessionToken(existing);
+        return { token: existing, historyCount: count, fresh: false };
+      }
       // history said the token was bad — fall through and create a new one.
     }
 
@@ -360,6 +366,7 @@ export const createOmnichannelAdapter = ({
     const result = await api.createSession(appId, payload);
     if (!result?.session_token) throw new Error('createSession returned no token');
     storage.setSessionToken(result.session_token);
+    storage.rememberSessionToken(result.session_token);
     return { token: result.session_token, historyCount: 0, fresh: true };
   };
 
@@ -672,6 +679,99 @@ export const createOmnichannelAdapter = ({
     boot();
   };
 
+  /**
+   * Every conversation this browser has had, newest first.
+   *
+   * There is no endpoint that lists a visitor's conversations — the widget API
+   * is addressed by session token — so the list is assembled from the tokens
+   * we kept, one `GET /session/{token}` each. That is also why it is bounded
+   * (see MAX_REMEMBERED in storage) and why it is called when the home screen
+   * opens rather than at boot: a visitor who never opens the panel should not
+   * pay for a list nobody looked at.
+   *
+   * Rows that fail are dropped rather than rendered broken, and a token the
+   * server has forgotten is dropped from the archive too.
+   */
+  const listConversations = async () => {
+    const tokens = storage.getSessionTokens();
+    if (!tokens.length) return [];
+
+    const rows = await Promise.all(tokens.map(async (token) => {
+      try {
+        const result = await api.getSession(token);
+        const conv = result?.conversation || {};
+        const last = conv.last_message || null;
+        // A conversation with nothing in it is a session that was opened and
+        // never used — the same rows the dashboard filters out of its own
+        // inbox. Listing them would offer the visitor a conversation they
+        // never had.
+        if (!last) return null;
+        return {
+          token,
+          id: conv.id ?? null,
+          status: conv.status ?? null,
+          unreadCount: typeof result?.unread_count === 'number' ? result.unread_count : 0,
+          agent: conv.agent ? { type: 'human', name: conv.agent.name } : null,
+          lastMessage: {
+            // The same vocabulary the templates already use for a bubble, so
+            // a row and a message are read by the same code.
+            from: last.sender_type === 'incoming' ? 'client' : 'bot',
+            text: last.body || '',
+            messageType: last.message_type || 'text',
+            sentAt: last.sent_at || null,
+          },
+        };
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) storage.forgetSessionToken(token);
+        return null;
+      }
+    }));
+
+    // Insertion order is when this browser first saw each token; the server's
+    // timestamps are when anybody last spoke, which is what the list is sorted
+    // by everywhere else in the product.
+    return rows
+      .filter(Boolean)
+      .sort((a, b) => (b.lastMessage.sentAt || 0) - (a.lastMessage.sentAt || 0));
+  };
+
+  /**
+   * Switch the live conversation to one the visitor picked from the list.
+   *
+   * A resolved conversation opened this way is readable but not writable —
+   * the backend refuses messages to it and the template shows "start a new
+   * conversation" instead of the composer, which is the same state a
+   * conversation resolved under the visitor's nose ends up in.
+   */
+  const openConversation = async (token) => {
+    if (!token || token === state.sessionToken) return;
+    log('opening conversation', token);
+
+    if (unsubscribeChannel) { try { unsubscribeChannel(); } catch (_e) {} unsubscribeChannel = null; }
+    if (realtime) { try { realtime.close(); } catch (_e) {} realtime = null; }
+
+    // Drafts belong to the conversation being left. Retrying one into another
+    // conversation would post a message the visitor thinks they abandoned.
+    outbox.clear();
+    storage.setSessionToken(token);
+    storage.rememberSessionToken(token);
+    state.sessionToken = token;
+    handlers.onReset?.();
+
+    const { ok } = await loadHistory(token);
+    if (stopped) return;
+    if (!ok) {
+      // Gone server-side between listing it and opening it. Fall back to the
+      // normal boot rather than leaving the visitor on an empty thread.
+      state.sessionToken = null;
+      boot();
+      return;
+    }
+    await loadSessionStatus(token);
+    if (stopped) return;
+    openRealtime(state.realtimeConfig, token);
+  };
+
   return {
     start(nextHandlers = {}) {
       if (started) return () => {};
@@ -720,6 +820,8 @@ export const createOmnichannelAdapter = ({
     uploadAttachment,
     markSeen,
     reset,
+    listConversations,
+    openConversation,
     refreshStatus: refreshSessionStatus,
   };
 };

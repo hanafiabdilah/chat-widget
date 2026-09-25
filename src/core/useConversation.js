@@ -157,6 +157,23 @@ export const useConversation = (adapter) => {
     adapterRef.current?.refreshStatus?.();
   }, []);
 
+  // Every conversation this browser has had, newest first — what the home
+  // screen lists. Resolves to `[]` on an adapter that does not keep an
+  // archive (a host's own, or a mock), so the caller renders an empty list
+  // rather than having to know which kind of adapter it was given.
+  const listConversations = useCallback(() => {
+    const fn = adapterRef.current?.listConversations;
+    if (!fn) return Promise.resolve([]);
+    return Promise.resolve(fn()).catch(() => []);
+  }, []);
+
+  // Switch the live thread to one picked from that list.
+  const openConversation = useCallback((token) => {
+    const fn = adapterRef.current?.openConversation;
+    if (!fn) return Promise.resolve();
+    return Promise.resolve(fn(token)).catch(() => {});
+  }, []);
+
   return {
     messages,
     isTyping,
@@ -174,6 +191,8 @@ export const useConversation = (adapter) => {
     markSeen,
     reset,
     refreshStatus,
+    listConversations,
+    openConversation,
   };
 };
 

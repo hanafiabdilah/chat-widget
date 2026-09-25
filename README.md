@@ -82,7 +82,7 @@ visitor message. The chips disappear after the visitor sends anything.
 ## Features
 
 - **Single component** — drop in, no provider setup, no manual wiring.
-- **Home screen** — a greeting, the conversation waiting to be picked up, and one button to start a new one. No tab bar: the only other place to be is the conversation, and the card that describes it is what opens it.
+- **Home screen** — a greeting, the visitor's recent conversations (including the ones already resolved) and one button to start a new one. Tapping a row reopens that conversation; a resolved one is readable, with "start a new conversation" where the composer would be. No tab bar: the only other place to be is a conversation, and the row that describes it is what opens it.
 - **One accent, whole theme** — the workspace's brand colour produces the launcher, the hero, the bubbles and the links, each measured for contrast against the surface it lands on. Pale brands get dark ink, dark brands get light ink, and a brand the colour of the panel still has a visible launcher.
 - **Dark mode that follows the site** — `data-theme`, a `dark` class, the CSS `color-scheme` property, then the OS preference. Re-read whenever the page changes its mind, so a visitor flipping the site's own theme switch takes the widget with them.
 - **Dual templates** — `proxybr` (dark, themable) and `global` (brand-neutral, light and dark). Backend picks via `template_type`.

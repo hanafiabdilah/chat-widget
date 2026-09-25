@@ -173,10 +173,18 @@ export const GlobalTemplate = ({
     [agents, conversation.currentAgent],
   );
 
-  const openChat = () => {
-    // "Start a new conversation" from home: the old thread is resolved, so
-    // the card that says so has to actually produce a fresh one.
-    if (conversation.conversationStatus === 'resolved') conversation.reset();
+  const openChat = (token) => {
+    if (token) {
+      // Picked from the list. Switching threads is the adapter's job and the
+      // view does not wait for it: the history lands in a thread that is
+      // already on screen, which is what every other message does too.
+      conversation.openConversation(token);
+    } else if (conversation.conversationStatus === 'resolved') {
+      // "Start a new conversation" from the compose card. The thread it would
+      // otherwise continue is closed, so the card that says so has to
+      // actually produce a fresh one.
+      conversation.reset();
+    }
     setDirection('forward');
     setView('chat');
   };
